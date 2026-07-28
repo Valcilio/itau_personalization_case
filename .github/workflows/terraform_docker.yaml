@@ -46,7 +46,14 @@ jobs:
           terraform_version: 1.9.8
 
       - name: Terraform Init
-        run: terraform init -input=false
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform init -input=false \
+            -backend-config="bucket=personalization-terraform-state-${ACCOUNT_ID}" \
+            -backend-config="key=terraform/state/model-train/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="dynamodb_table=personalization-terraform-locks" \
+            -backend-config="encrypt=true"
 
       - name: Terraform Validate
         run: terraform validate

@@ -6,3 +6,8 @@ terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/.terraform.tfstate.lock.info
 terraform/terraform.tfvars
+terraform/backend.hcl
+terraform/bootstrap/.terraform/
+terraform/bootstrap/*.tfstate
+terraform/bootstrap/*.tfstate.*
+terraform/bootstrap/.terraform.tfstate.lock.info
