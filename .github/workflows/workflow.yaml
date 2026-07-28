@@ -2,11 +2,7 @@ name: Personalization CI/CD
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -19,13 +15,13 @@ jobs:
   ci-build-and-tag:
     name: CI - Build model-train and Tag
     needs: ci-quality
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push'
     uses: ./.github/workflows/cicd_general.yaml
 
   cd-docker-and-terraform:
     name: CD - model-train Deploy
     needs: ci-build-and-tag
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push'
     uses: ./.github/workflows/terraform_docker.yaml
     with:
       image_tag: ${{ needs.ci-build-and-tag.outputs.image_tag }}
