@@ -1,6 +1,0 @@
-image_tag                 = "v0.1.0"
-aws_region                = "us-east-1"
-project_name              = "personalization"
-training_data_prefix      = "training-data"
-training_instance_type    = "ml.m5.large"
-trigger_training_pipeline = false

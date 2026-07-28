@@ -24,7 +24,7 @@ variable "training_data_prefix" {
 variable "training_instance_type" {
   description = "SageMaker instance type used by the model_train job."
   type        = string
-  default     = "ml.m5.large"
+  default     = "ml.m5.xlarge"
 }
 
 variable "model_package_group_name" {
