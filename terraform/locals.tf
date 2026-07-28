@@ -7,19 +7,16 @@ locals {
   region     = data.aws_region.current.name
 
   ecr_repositories = {
-    model_train                = "personalization-model-train"
-    model_predict              = "personalization-model-predict"
-    predictions_retriever_api  = "personalization-predictions-retriever-api"
+    model_train = "personalization-model-train"
   }
 
-  model_train_image_uri   = "${aws_ecr_repository.services["model_train"].repository_url}:${var.image_tag}"
-  model_predict_image_uri = "${aws_ecr_repository.services["model_predict"].repository_url}:${var.image_tag}"
+  model_train_image_uri = "${aws_ecr_repository.services["model_train"].repository_url}:${var.image_tag}"
 
   model_train_environment = {
     MODEL_BUCKET             = aws_s3_bucket.models.id
     MODEL_PREFIX             = "models/purchase_propensity/${var.image_tag}"
     MODEL_PACKAGE_GROUP_NAME = aws_sagemaker_model_package_group.purchase_propensity.model_package_group_name
-    INFERENCE_IMAGE_URI      = local.model_predict_image_uri
+    INFERENCE_IMAGE_URI      = local.model_train_image_uri
     CLOUDWATCH_LOG_GROUP     = aws_cloudwatch_log_group.model_train.name
     AWS_REGION               = var.aws_region
     MODEL_VERSION            = var.image_tag

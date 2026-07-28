@@ -17,13 +17,13 @@ jobs:
     uses: ./.github/workflows/pylint_and_pytest.yaml
 
   ci-build-and-tag:
-    name: CI - Build Images and Tag
+    name: CI - Build model-train and Tag
     needs: ci-quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/cicd_general.yaml
 
   cd-docker-and-terraform:
-    name: CD - Push Images and Deploy
+    name: CD - model-train Deploy
     needs: ci-build-and-tag
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/terraform_docker.yaml
