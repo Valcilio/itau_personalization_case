@@ -52,10 +52,10 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_pipeline=false"
+        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_task=false"
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_pipeline=false"
+        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_task=false"
 
   push-model-train-image:
     name: Push model-train Image to ECR

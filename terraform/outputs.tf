@@ -14,18 +14,18 @@ output "model_train_ecr_repository_url" {
 }
 
 output "model_train_image_uri" {
-  description = "Full Docker image URI used by the SageMaker training step."
+  description = "Full Docker image URI used by the ECS training task."
   value       = local.model_train_image_uri
 }
 
-output "model_train_pipeline_name" {
-  description = "SageMaker pipeline responsible for running model_train."
-  value       = aws_sagemaker_pipeline.model_train.pipeline_name
+output "model_train_ecs_cluster_name" {
+  description = "ECS cluster responsible for running model_train."
+  value       = aws_ecs_cluster.model_train.name
 }
 
-output "model_train_pipeline_execution_display_name" {
-  description = "Display name used when triggering the SageMaker pipeline, if enabled."
-  value       = var.trigger_training_pipeline ? "train-${var.image_tag}" : null
+output "model_train_ecs_task_definition_arn" {
+  description = "ECS task definition used to run model_train."
+  value       = aws_ecs_task_definition.model_train.arn
 }
 
 output "model_package_group_name" {
@@ -38,7 +38,17 @@ output "model_train_log_group" {
   value       = aws_cloudwatch_log_group.model_train.name
 }
 
-output "sagemaker_execution_role_arn" {
-  description = "IAM role assumed by the SageMaker training job."
-  value       = aws_iam_role.sagemaker_execution.arn
+output "model_train_ecs_task_role_arn" {
+  description = "IAM role assumed by the ECS training task."
+  value       = aws_iam_role.ecs_task.arn
+}
+
+output "model_train_ecs_security_group_id" {
+  description = "Security group used by the ECS training task."
+  value       = aws_security_group.model_train.id
+}
+
+output "model_train_ecs_subnet_ids" {
+  description = "Default VPC subnet IDs used by the ECS training task."
+  value       = data.aws_subnets.default.ids
 }

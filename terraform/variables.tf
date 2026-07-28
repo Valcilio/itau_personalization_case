@@ -21,10 +21,16 @@ variable "training_data_prefix" {
   default     = "training-data"
 }
 
-variable "training_instance_type" {
-  description = "SageMaker instance type used by the model_train job."
+variable "ecs_task_cpu" {
+  description = "CPU units for the ECS Fargate training task."
   type        = string
-  default     = "t2.micro"
+  default     = "1024"
+}
+
+variable "ecs_task_memory" {
+  description = "Memory in MiB for the ECS Fargate training task."
+  type        = string
+  default     = "2048"
 }
 
 variable "model_package_group_name" {
@@ -33,8 +39,8 @@ variable "model_package_group_name" {
   default     = "purchase-propensity-model-group"
 }
 
-variable "trigger_training_pipeline" {
-  description = "When true, starts a SageMaker pipeline execution during terraform apply."
+variable "trigger_training_task" {
+  description = "When true, starts an ECS training task during terraform apply."
   type        = bool
-  default     = true
+  default     = false
 }

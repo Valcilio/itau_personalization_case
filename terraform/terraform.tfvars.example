@@ -1,0 +1,7 @@
+image_tag              = "v0.1.0"
+aws_region             = "us-east-1"
+project_name           = "personalization"
+training_data_prefix   = "training-data"
+ecs_task_cpu           = "1024"
+ecs_task_memory        = "2048"
+trigger_training_task  = false

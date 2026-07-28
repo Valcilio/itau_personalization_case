@@ -1,15 +1,30 @@
-data "aws_iam_policy_document" "sagemaker_assume_role" {
+data "aws_iam_policy_document" "ecs_task_assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
 
     principals {
       type        = "Service"
-      identifiers = ["sagemaker.amazonaws.com"]
+      identifiers = ["ecs-tasks.amazonaws.com"]
     }
   }
 }
 
-data "aws_iam_policy_document" "sagemaker_execution" {
+resource "aws_iam_role" "ecs_task_execution" {
+  name               = "${var.project_name}-ecs-task-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
+
+  tags = {
+    Project = var.project_name
+    Service = "model-train"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
+  role       = aws_iam_role.ecs_task_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+data "aws_iam_policy_document" "ecs_task" {
   statement {
     sid = "S3Access"
     actions = [
@@ -27,36 +42,6 @@ data "aws_iam_policy_document" "sagemaker_execution" {
   }
 
   statement {
-    sid = "ECRAccess"
-    actions = [
-      "ecr:BatchGetImage",
-      "ecr:GetDownloadUrlForLayer",
-      "ecr:BatchCheckLayerAvailability",
-    ]
-    resources = [for repository in aws_ecr_repository.services : repository.arn]
-  }
-
-  statement {
-    sid       = "ECRAuthorization"
-    actions   = ["ecr:GetAuthorizationToken"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid = "CloudWatchLogs"
-    actions = [
-      "logs:CreateLogGroup",
-      "logs:CreateLogStream",
-      "logs:PutLogEvents",
-      "logs:DescribeLogStreams",
-    ]
-    resources = [
-      aws_cloudwatch_log_group.model_train.arn,
-      "${aws_cloudwatch_log_group.model_train.arn}:*",
-    ]
-  }
-
-  statement {
     sid = "ModelRegistry"
     actions = [
       "sagemaker:CreateModelPackage",
@@ -70,63 +55,18 @@ data "aws_iam_policy_document" "sagemaker_execution" {
   }
 }
 
-resource "aws_iam_role" "sagemaker_execution" {
-  name               = "${var.project_name}-sagemaker-execution"
-  assume_role_policy = data.aws_iam_policy_document.sagemaker_assume_role.json
+resource "aws_iam_role" "ecs_task" {
+  name               = "${var.project_name}-ecs-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
 
   tags = {
     Project = var.project_name
+    Service = "model-train"
   }
 }
 
-resource "aws_iam_role_policy" "sagemaker_execution" {
-  name   = "${var.project_name}-sagemaker-execution"
-  role   = aws_iam_role.sagemaker_execution.id
-  policy = data.aws_iam_policy_document.sagemaker_execution.json
-}
-
-data "aws_iam_policy_document" "sagemaker_pipeline_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["sagemaker.amazonaws.com"]
-    }
-  }
-}
-
-data "aws_iam_policy_document" "sagemaker_pipeline" {
-  statement {
-    sid = "PipelineExecution"
-    actions = [
-      "sagemaker:CreateTrainingJob",
-      "sagemaker:DescribeTrainingJob",
-      "sagemaker:StopTrainingJob",
-      "sagemaker:AddTags",
-      "sagemaker:ListTags",
-    ]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "PassRole"
-    actions   = ["iam:PassRole"]
-    resources = [aws_iam_role.sagemaker_execution.arn]
-  }
-}
-
-resource "aws_iam_role" "sagemaker_pipeline" {
-  name               = "${var.project_name}-sagemaker-pipeline"
-  assume_role_policy = data.aws_iam_policy_document.sagemaker_pipeline_assume_role.json
-
-  tags = {
-    Project = var.project_name
-  }
-}
-
-resource "aws_iam_role_policy" "sagemaker_pipeline" {
-  name   = "${var.project_name}-sagemaker-pipeline"
-  role   = aws_iam_role.sagemaker_pipeline.id
-  policy = data.aws_iam_policy_document.sagemaker_pipeline.json
+resource "aws_iam_role_policy" "ecs_task" {
+  name   = "${var.project_name}-ecs-task"
+  role   = aws_iam_role.ecs_task.id
+  policy = data.aws_iam_policy_document.ecs_task.json
 }
