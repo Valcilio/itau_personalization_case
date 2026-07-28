@@ -69,12 +69,6 @@ data "aws_iam_policy_document" "models_sagemaker_read" {
       aws_s3_bucket.models.arn,
       "${aws_s3_bucket.models.arn}/*",
     ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
   }
 }
 

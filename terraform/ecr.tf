@@ -29,13 +29,9 @@ data "aws_iam_policy_document" "ecr_sagemaker_pull" {
       "ecr:BatchCheckLayerAvailability",
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchGetImage",
+      "ecr:DescribeImages",
+      "ecr:DescribeRepositories",
     ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
   }
 }
 

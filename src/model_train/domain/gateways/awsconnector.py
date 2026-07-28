@@ -1,6 +1,7 @@
 """AWS integration gateway for the model training pipeline."""
 
 import os
+import tarfile
 from pathlib import Path
 
 import boto3
@@ -127,7 +128,7 @@ class AwsConnector:
         }
 
     def upload_model_directory(self, local_dir: str | Path, bucket: str, prefix: str) -> str:
-        """Upload every file in a local directory to S3.
+        """Upload model artifacts to S3, including a SageMaker-compatible tar.gz archive.
 
         Args:
             local_dir: Directory containing model artifacts.
@@ -135,14 +136,18 @@ class AwsConnector:
             prefix: Destination prefix inside the bucket.
 
         Returns:
-            S3 URI of the first uploaded artifact.
+            S3 URI of the ``model.tar.gz`` archive used by SageMaker Model Registry.
 
         Raises:
             FileNotFoundError: If the directory does not contain files to upload.
         """
         local_directory = Path(local_dir)
         base_prefix = prefix.rstrip("/")
-        uploaded_uris: list[str] = []
+        artifact_files = [
+            file_path
+            for file_path in local_directory.iterdir()
+            if file_path.is_file() and file_path.name != "model.tar.gz"
+        ]
 
         self.logger.info(
             "model_directory_upload_started",
@@ -151,13 +156,7 @@ class AwsConnector:
             prefix=base_prefix,
         )
 
-        for file_path in local_directory.iterdir():
-            if not file_path.is_file():
-                continue
-            object_key = f"{base_prefix}/{file_path.name}"
-            uploaded_uris.append(self.upload_file(file_path, bucket, object_key))
-
-        if not uploaded_uris:
+        if not artifact_files:
             self.logger.error(
                 "model_directory_upload_failed",
                 reason="no_files_found",
@@ -165,12 +164,24 @@ class AwsConnector:
             )
             raise FileNotFoundError(f"No model files found in {local_directory}")
 
+        uploaded_uris: list[str] = []
+        for file_path in artifact_files:
+            object_key = f"{base_prefix}/{file_path.name}"
+            uploaded_uris.append(self.upload_file(file_path, bucket, object_key))
+
+        archive_path = local_directory / "model.tar.gz"
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for file_path in artifact_files:
+                archive.add(file_path, arcname=file_path.name)
+
+        archive_uri = self.upload_file(archive_path, bucket, f"{base_prefix}/model.tar.gz")
+
         self.logger.info(
             "model_directory_upload_completed",
-            uploaded_files=len(uploaded_uris),
-            primary_s3_uri=uploaded_uris[0],
+            uploaded_files=len(uploaded_uris) + 1,
+            model_archive_s3_uri=archive_uri,
         )
-        return uploaded_uris[0]
+        return archive_uri
 
     def register_model_package(
         self,
