@@ -6,6 +6,10 @@ on:
       image_tag:
         required: true
         type: string
+      push_latest:
+        required: false
+        type: boolean
+        default: false
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -40,15 +44,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-model-train:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-model-train:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Build and push model-train
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/model_train/Dockerfile
           push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/personalization-model-train:${{ inputs.image_tag }}
-            ${{ steps.login-ecr.outputs.registry }}/personalization-model-train:latest
+          tags: ${{ steps.docker-tags.outputs.tags }}
           cache-from: type=gha,scope=model-train
           cache-to: type=gha,mode=max,scope=model-train
 
