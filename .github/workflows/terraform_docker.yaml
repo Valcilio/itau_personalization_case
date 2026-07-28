@@ -99,5 +99,8 @@ jobs:
           file: docker/model_train/Dockerfile
           push: true
           tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
           cache-from: type=gha,scope=model-train
           cache-to: type=gha,mode=max,scope=model-train

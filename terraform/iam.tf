@@ -67,6 +67,19 @@ data "aws_iam_policy_document" "ecs_task" {
     ]
     resources = ["*"]
   }
+
+  statement {
+    sid = "EcrReadForModelRegistryValidation"
+    actions = [
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchGetImage",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:DescribeImages",
+      "ecr:DescribeRepositories",
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role" "ecs_task" {
