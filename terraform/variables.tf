@@ -39,22 +39,16 @@ variable "model_package_group_name" {
   default     = "purchase-propensity-model-group"
 }
 
-variable "trigger_training_task" {
-  description = "When true, starts an ECS training task during terraform apply."
-  type        = bool
-  default     = false
-}
-
 variable "ecs_service_desired_count" {
-  description = "Initial desired task count for the model_train ECS service."
+  description = "Desired task count for the model_train ECS service. Use 0 to avoid automatic restarts."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "ecs_autoscaling_min_capacity" {
   description = "Minimum number of tasks for model_train ECS service autoscaling."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "ecs_autoscaling_max_capacity" {
@@ -74,3 +68,4 @@ variable "ecs_autoscaling_target_memory" {
   type        = number
   default     = 70
 }
+

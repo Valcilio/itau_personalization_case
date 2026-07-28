@@ -73,39 +73,20 @@ resource "aws_ecs_task_definition" "model_train" {
   }
 }
 
-resource "null_resource" "model_train_task_execution" {
-  count = var.trigger_training_task ? 1 : 0
-
-  triggers = {
-    image_tag                = var.image_tag
-    task_definition_revision = aws_ecs_task_definition.model_train.revision
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      aws ecs run-task \
-        --region ${var.aws_region} \
-        --cluster ${aws_ecs_cluster.model_train.name} \
-        --task-definition ${aws_ecs_task_definition.model_train.arn} \
-        --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${local.ecs_subnet_ids}],securityGroups=[${aws_security_group.model_train.id}],assignPublicIp=ENABLED}" \
-        --started-by terraform-train-${var.image_tag}
-    EOT
-  }
-
-  depends_on = [
-    aws_s3_object.training_events,
-    aws_s3_object.training_products,
-    aws_ecs_task_definition.model_train,
-  ]
-}
-
 resource "aws_ecs_service" "model_train" {
   name            = "${var.project_name}-model-train"
   cluster         = aws_ecs_cluster.model_train.id
   task_definition = aws_ecs_task_definition.model_train.arn
   desired_count   = var.ecs_service_desired_count
   launch_type     = "FARGATE"
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 0
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids
@@ -170,3 +151,4 @@ resource "aws_appautoscaling_policy" "model_train_memory" {
     scale_out_cooldown = 60
   }
 }
+
