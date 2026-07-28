@@ -23,7 +23,7 @@ locals {
     MODEL_PACKAGE_GROUP_NAME = aws_sagemaker_model_package_group.purchase_propensity.model_package_group_name
     INFERENCE_IMAGE_URI      = local.model_train_image_uri
     AWS_REGION               = var.aws_region
-    MODEL_VERSION            = var.image_tag
+    IMAGE_TAG                = var.image_tag
     LOG_LEVEL                = "INFO"
   }
 }

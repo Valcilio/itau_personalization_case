@@ -22,15 +22,15 @@ variable "training_data_prefix" {
 }
 
 variable "ecs_task_cpu" {
-  description = "CPU units for the ECS Fargate training task."
+  description = "CPU units for the ECS Fargate training task (4096 = 4 vCPU)."
   type        = string
-  default     = "1024"
+  default     = "4096"
 }
 
 variable "ecs_task_memory" {
-  description = "Memory in MiB for the ECS Fargate training task."
+  description = "Memory in MiB for the ECS Fargate training task (8192 = 8 GiB)."
   type        = string
-  default     = "2048"
+  default     = "8192"
 }
 
 variable "model_package_group_name" {

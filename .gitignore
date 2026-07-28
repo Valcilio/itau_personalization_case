@@ -11,3 +11,5 @@ terraform/bootstrap/.terraform/
 terraform/bootstrap/*.tfstate
 terraform/bootstrap/*.tfstate.*
 terraform/bootstrap/.terraform.tfstate.lock.info
+test.ipynb
+notebooks/model_artifact/

@@ -99,6 +99,8 @@ jobs:
           file: docker/model_train/Dockerfile
           push: true
           tags: ${{ steps.docker-tags.outputs.tags }}
+          build-args: |
+            IMAGE_TAG=${{ inputs.image_tag }}
           platforms: linux/amd64
           provenance: false
           sbom: false

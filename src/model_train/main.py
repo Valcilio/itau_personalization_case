@@ -4,7 +4,6 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -35,13 +34,24 @@ def load_config() -> dict[str, str]:
 
     Returns:
         Dictionary with local paths, AWS settings and model versioning data.
+
+    Raises:
+        ValueError: If ``IMAGE_TAG`` is not configured.
     """
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    image_tag = os.getenv("IMAGE_TAG", "").strip()
+    if not image_tag:
+        raise ValueError(
+            "IMAGE_TAG is required and must match the Docker image tag used as model version"
+        )
+
     return {
         "data_bucket": os.getenv("DATA_BUCKET", ""),
         "data_prefix": os.getenv("DATA_PREFIX", "training-data"),
         "model_bucket": os.getenv("MODEL_BUCKET", ""),
-        "model_prefix": os.getenv("MODEL_PREFIX", f"models/purchase_propensity/{timestamp}"),
+        "model_prefix": os.getenv(
+            "MODEL_PREFIX",
+            f"models/purchase_propensity/{image_tag}",
+        ),
         "model_output_dir": os.getenv(
             "MODEL_OUTPUT_DIR",
             os.getenv("SM_MODEL_DIR", "/tmp/model"),
@@ -55,9 +65,7 @@ def load_config() -> dict[str, str]:
             "purchase-propensity-model-group",
         ),
         "inference_image_uri": os.getenv("INFERENCE_IMAGE_URI", ""),
-        "model_version": os.getenv("MODEL_VERSION", f"1.0.{timestamp}"),
-        "local_events_path": os.getenv("LOCAL_EVENTS_PATH", "data/events.csv"),
-        "local_products_path": os.getenv("LOCAL_PRODUCTS_PATH", "data/products.csv"),
+        "model_version": image_tag,
     }
 
 
@@ -65,38 +73,34 @@ def load_datasets(
     config: dict[str, str],
     aws_connector: AwsConnector,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load training datasets from S3 or from the local filesystem.
+    """Load training datasets from S3.
 
     Args:
         config: Pipeline configuration produced by ``load_config``.
-        aws_connector: AWS gateway used when ``DATA_BUCKET`` is configured.
+        aws_connector: AWS gateway used to download training CSVs.
 
     Returns:
         Events and products dataframes ready for feature engineering.
+
+    Raises:
+        ValueError: If ``DATA_BUCKET`` is not configured.
     """
-    if config["data_bucket"]:
-        logger.info(
-            "dataset_source_selected",
-            source="s3",
-            bucket=config["data_bucket"],
-            prefix=config["data_prefix"],
-        )
-        dataset_paths = aws_connector.download_training_dataset(
-            bucket=config["data_bucket"],
-            prefix=config["data_prefix"],
-            local_dir=config["training_data_dir"],
-        )
-        events_path = dataset_paths["events"]
-        products_path = dataset_paths["products"]
-    else:
-        logger.info(
-            "dataset_source_selected",
-            source="local",
-            events_path=config["local_events_path"],
-            products_path=config["local_products_path"],
-        )
-        events_path = Path(config["local_events_path"])
-        products_path = Path(config["local_products_path"])
+    if not config["data_bucket"]:
+        raise ValueError("DATA_BUCKET is required to load training datasets from S3")
+
+    logger.info(
+        "dataset_source_selected",
+        source="s3",
+        bucket=config["data_bucket"],
+        prefix=config["data_prefix"],
+    )
+    dataset_paths = aws_connector.download_training_dataset(
+        bucket=config["data_bucket"],
+        prefix=config["data_prefix"],
+        local_dir=config["training_data_dir"],
+    )
+    events_path = dataset_paths["events"]
+    products_path = dataset_paths["products"]
 
     events = pd.read_csv(events_path)
     products = pd.read_csv(products_path)
