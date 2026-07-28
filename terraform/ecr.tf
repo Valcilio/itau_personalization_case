@@ -15,6 +15,36 @@ resource "aws_ecr_repository" "services" {
   }
 }
 
+data "aws_iam_policy_document" "ecr_sagemaker_pull" {
+  statement {
+    sid    = "AllowSageMakerModelRegistryPull"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["sagemaker.amazonaws.com"]
+    }
+
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchGetImage",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.account_id]
+    }
+  }
+}
+
+resource "aws_ecr_repository_policy" "sagemaker_pull" {
+  for_each   = aws_ecr_repository.services
+  repository = each.value.name
+  policy     = data.aws_iam_policy_document.ecr_sagemaker_pull.json
+}
+
 resource "aws_ecr_lifecycle_policy" "services" {
   for_each   = aws_ecr_repository.services
   repository = each.value.name

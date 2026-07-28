@@ -49,3 +49,36 @@ resource "aws_s3_object" "training_products" {
   source = "${path.module}/../data/products.csv"
   etag   = filemd5("${path.module}/../data/products.csv")
 }
+
+data "aws_iam_policy_document" "models_sagemaker_read" {
+  statement {
+    sid    = "AllowSageMakerModelRegistryRead"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["sagemaker.amazonaws.com"]
+    }
+
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+
+    resources = [
+      aws_s3_bucket.models.arn,
+      "${aws_s3_bucket.models.arn}/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "models_sagemaker_read" {
+  bucket = aws_s3_bucket.models.id
+  policy = data.aws_iam_policy_document.models_sagemaker_read.json
+}
