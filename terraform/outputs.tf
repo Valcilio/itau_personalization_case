@@ -48,22 +48,19 @@ output "model_train_ecs_security_group_id" {
   value       = aws_security_group.model_train.id
 }
 
-output "model_train_ecs_service_name" {
-  description = "ECS service name for model_train autoscaling."
-  value       = aws_ecs_service.model_train.name
-}
-
-output "model_train_ecs_autoscaling_min_capacity" {
-  description = "Minimum task count configured for model_train autoscaling."
-  value       = var.ecs_autoscaling_min_capacity
-}
-
-output "model_train_ecs_autoscaling_max_capacity" {
-  description = "Maximum task count configured for model_train autoscaling."
-  value       = var.ecs_autoscaling_max_capacity
-}
-
 output "model_train_ecs_subnet_ids" {
   description = "Default VPC subnet IDs used by the ECS training task."
   value       = data.aws_subnets.default.ids
+}
+
+output "model_train_ecs_run_task_command" {
+  description = "Command to run a one-off model_train batch task."
+  value = format(
+    "aws ecs run-task --region %s --cluster %s --task-definition %s --launch-type FARGATE --network-configuration \"awsvpcConfiguration={subnets=[%s],securityGroups=[%s],assignPublicIp=ENABLED}\"",
+    var.aws_region,
+    aws_ecs_cluster.model_train.name,
+    aws_ecs_task_definition.model_train.family,
+    join(",", data.aws_subnets.default.ids),
+    aws_security_group.model_train.id,
+  )
 }

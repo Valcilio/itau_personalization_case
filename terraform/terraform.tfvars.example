@@ -1,11 +1,6 @@
-image_tag                     = "v0.1.0"
-aws_region                    = "us-east-1"
-project_name                  = "personalization"
-training_data_prefix          = "training-data"
-ecs_task_cpu                  = "1024"
-ecs_task_memory               = "2048"
-ecs_service_desired_count     = 0
-ecs_autoscaling_min_capacity  = 0
-ecs_autoscaling_max_capacity  = 20
-ecs_autoscaling_target_cpu    = 70
-ecs_autoscaling_target_memory = 70
+image_tag            = "v0.1.0"
+aws_region           = "us-east-1"
+project_name         = "personalization"
+training_data_prefix = "training-data"
+ecs_task_cpu         = "1024"
+ecs_task_memory      = "2048"
