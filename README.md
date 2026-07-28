@@ -43,10 +43,36 @@ Um microserviço HTTP (API REST, síncrona) que:
 1. **Ingestão / preparo de dados**
    Alguma forma de processar `events.csv` e `products.csv` em features consumíveis pelo modelo (pode ser um job/script que roda antes de subir a API, um passo de startup, ou o que você achar mais adequado — justifique a escolha).
 
-2. **Endpoint de recomendação**
-   `GET /recommendations/{user_id}` (ou equivalente) que retorna uma lista ranqueada de produtos recomendados para aquele usuário, com o score do modelo.
+2. **Endpoints da API**
+   Exponha pelo menos os seguintes caminhos HTTP:
+
+   | # | Método | Caminho | Descrição |
+   |---|--------|---------|-----------|
+   | 1 | `GET` | `/recommendations/{user_id}` | Retorna uma lista ranqueada de produtos recomendados para o usuário, com o score do modelo. |
+   | 2 | `GET` | `/health` | Health check simples do serviço. |
+   | 3 | `GET` | `/metrics` | Métricas básicas (bônus; formato Prometheus). |
+   | 4 | `POST` | `/recommendations_filtered` | Mesma lógica de recomendação do endpoint principal, com filtros no corpo da requisição. O ranking continua baseado no score do modelo, aplicado ao subconjunto filtrado. |
+
+   **Corpo da requisição (`POST /recommendations_filtered`):**
+
+   ```json
+   {
+     "user_id": "u_0231",
+     "limit": 10,
+     "exclude_product_ids": ["p_001", "p_002"],
+     "context": { "device": "mobile", "campaign": "black_friday" }
+   }
+   ```
+
+   | Campo | Tipo | Obrigatório | Descrição |
+   |-------|------|-------------|-----------|
+   | `user_id` | `string` | sim | Identificador do usuário para personalização. |
+   | `limit` | `integer` | não | Quantidade máxima de recomendações a retornar (padrão: você define e documenta). |
+   | `exclude_product_ids` | `string[]` | não | Lista de `product_id` a remover do resultado (ex.: produtos já no carrinho). |
+   | `context` | `object` | não | Metadados de contexto da requisição (ex.: `device`, `campaign`). Não precisam alterar o score do modelo neste case — registre nos logs estruturados e documente uso futuro no `SOLUTION.md`. |
+
    - Você decide quantos produtos retornar e como ranquear (mas o score do modelo deve ser a base do ranking).
-   - Inclua também um endpoint simples de health check.
+   - Para `/recommendations_filtered`, documente no `SOLUTION.md` como cada filtro afeta o resultado e o que faria com `context` em produção.
 
 3. **Cold start**
    O que acontece quando `user_id` não existe no histórico de `events.csv`? Descreva e implemente uma estratégia de tratamento.

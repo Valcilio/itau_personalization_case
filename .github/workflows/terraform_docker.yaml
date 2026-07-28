@@ -1,0 +1,104 @@
+name: CD Docker Push and Terraform
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  push-images:
+    name: Push Docker Images to ECR
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: model-train
+            dockerfile: docker/model_train/Dockerfile
+            ecr_repo: personalization-model-train
+          - service: model-predict
+            dockerfile: docker/model_predict/Dockerfile
+            ecr_repo: personalization-model-predict
+          - service: predictions-retriever-api
+            dockerfile: docker/predictions_retriever_api/Dockerfile
+            ecr_repo: personalization-predictions-retriever-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ inputs.image_tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy-terraform:
+    name: Apply terraform
+    runs-on: ubuntu-latest
+    needs: push-images
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_pipeline=false"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="trigger_training_pipeline=false"

@@ -1,0 +1,35 @@
+name: Personalization CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  ci-quality:
+    name: CI - Pylint and Pytest
+    uses: ./.github/workflows/pylint_and_pytest.yaml
+
+  ci-build-and-tag:
+    name: CI - Build Images and Tag
+    needs: ci-quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/cicd_general.yaml
+
+  cd-docker-and-terraform:
+    name: CD - Push Images and Deploy
+    needs: ci-build-and-tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/terraform_docker.yaml
+    with:
+      image_tag: ${{ needs.ci-build-and-tag.outputs.image_tag }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}

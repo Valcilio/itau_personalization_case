@@ -1,0 +1,71 @@
+name: CI Build and Tag
+
+on:
+  workflow_call:
+    outputs:
+      image_tag:
+        description: Docker image tag generated for this pipeline run
+        value: ${{ jobs.build-and-tag.outputs.image_tag }}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-tag:
+    name: Build Docker Images and Tag Release
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.release-tag.outputs.image_tag }}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: model-train
+            dockerfile: docker/model_train/Dockerfile
+          - service: model-predict
+            dockerfile: docker/model_predict/Dockerfile
+          - service: predictions-retriever-api
+            dockerfile: docker/predictions_retriever_api/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image tag
+        id: release-tag
+        run: |
+          IMAGE_TAG="v0.1.${{ github.run_number }}"
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
+
+      - name: Build ${{ matrix.service }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: |
+            personalization/${{ matrix.service }}:${{ env.IMAGE_TAG }}
+            personalization/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Create and push git tag
+        if: matrix.service == 'model-train'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse "${IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${IMAGE_TAG} already exists. Skipping tag creation."
+            exit 0
+          fi
+
+          git tag "${IMAGE_TAG}"
+          git push origin "${IMAGE_TAG}"
