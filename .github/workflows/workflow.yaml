@@ -10,18 +10,24 @@ permissions:
 jobs:
   ci-quality:
     name: CI - Pylint and Pytest
+    permissions:
+      contents: read
     uses: ./.github/workflows/pylint_and_pytest.yaml
 
   ci-build-and-tag:
     name: CI - Build model-train and Tag
     needs: ci-quality
     if: github.event_name == 'push'
+    permissions:
+      contents: write
     uses: ./.github/workflows/cicd_general.yaml
 
   cd-docker-and-terraform:
     name: CD - model-train Deploy
     needs: ci-build-and-tag
     if: github.event_name == 'push'
+    permissions:
+      contents: read
     uses: ./.github/workflows/terraform_docker.yaml
     with:
       image_tag: ${{ needs.ci-build-and-tag.outputs.image_tag }}
