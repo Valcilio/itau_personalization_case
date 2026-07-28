@@ -99,3 +99,74 @@ resource "null_resource" "model_train_task_execution" {
     aws_ecs_task_definition.model_train,
   ]
 }
+
+resource "aws_ecs_service" "model_train" {
+  name            = "${var.project_name}-model-train"
+  cluster         = aws_ecs_cluster.model_train.id
+  task_definition = aws_ecs_task_definition.model_train.arn
+  desired_count   = var.ecs_service_desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = data.aws_subnets.default.ids
+    security_groups  = [aws_security_group.model_train.id]
+    assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
+  tags = {
+    Project = var.project_name
+    Service = "model-train"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.ecs_task_execution,
+  ]
+}
+
+resource "aws_appautoscaling_target" "model_train" {
+  max_capacity       = var.ecs_autoscaling_max_capacity
+  min_capacity       = var.ecs_autoscaling_min_capacity
+  resource_id        = "service/${aws_ecs_cluster.model_train.name}/${aws_ecs_service.model_train.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "model_train_cpu" {
+  name               = "${var.project_name}-model-train-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.model_train.resource_id
+  scalable_dimension = aws_appautoscaling_target.model_train.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.model_train.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    target_value       = var.ecs_autoscaling_target_cpu
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_policy" "model_train_memory" {
+  name               = "${var.project_name}-model-train-memory"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.model_train.resource_id
+  scalable_dimension = aws_appautoscaling_target.model_train.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.model_train.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+
+    target_value       = var.ecs_autoscaling_target_memory
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}

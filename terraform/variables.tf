@@ -44,3 +44,33 @@ variable "trigger_training_task" {
   type        = bool
   default     = false
 }
+
+variable "ecs_service_desired_count" {
+  description = "Initial desired task count for the model_train ECS service."
+  type        = number
+  default     = 1
+}
+
+variable "ecs_autoscaling_min_capacity" {
+  description = "Minimum number of tasks for model_train ECS service autoscaling."
+  type        = number
+  default     = 1
+}
+
+variable "ecs_autoscaling_max_capacity" {
+  description = "Maximum number of tasks for model_train ECS service autoscaling."
+  type        = number
+  default     = 20
+}
+
+variable "ecs_autoscaling_target_cpu" {
+  description = "Target average CPU utilization percentage for ECS autoscaling."
+  type        = number
+  default     = 70
+}
+
+variable "ecs_autoscaling_target_memory" {
+  description = "Target average memory utilization percentage for ECS autoscaling."
+  type        = number
+  default     = 70
+}

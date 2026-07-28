@@ -48,6 +48,21 @@ output "model_train_ecs_security_group_id" {
   value       = aws_security_group.model_train.id
 }
 
+output "model_train_ecs_service_name" {
+  description = "ECS service name for model_train autoscaling."
+  value       = aws_ecs_service.model_train.name
+}
+
+output "model_train_ecs_autoscaling_min_capacity" {
+  description = "Minimum task count configured for model_train autoscaling."
+  value       = var.ecs_autoscaling_min_capacity
+}
+
+output "model_train_ecs_autoscaling_max_capacity" {
+  description = "Maximum task count configured for model_train autoscaling."
+  value       = var.ecs_autoscaling_max_capacity
+}
+
 output "model_train_ecs_subnet_ids" {
   description = "Default VPC subnet IDs used by the ECS training task."
   value       = data.aws_subnets.default.ids

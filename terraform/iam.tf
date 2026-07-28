@@ -42,6 +42,19 @@ data "aws_iam_policy_document" "ecs_task" {
   }
 
   statement {
+    sid = "CloudWatchLogs"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    resources = [
+      aws_cloudwatch_log_group.model_train.arn,
+      "${aws_cloudwatch_log_group.model_train.arn}:*",
+    ]
+  }
+
+  statement {
     sid = "ModelRegistry"
     actions = [
       "sagemaker:CreateModelPackage",

@@ -118,7 +118,7 @@ class ModelTrainerLogger:
             log_group=log_group,
             stream_name=stream_name,
             boto3_client=logs_client,
-            create_log_group=True,
+            create_log_group=False,
         )
         cloudwatch_handler.setLevel(level)
         cloudwatch_handler.setFormatter(formatter)
