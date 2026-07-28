@@ -1,8 +1,3 @@
-# Copy to backend.hcl and adjust values after running terraform/bootstrap once.
-# Then run: terraform init -backend-config=backend.hcl
-
-bucket         = "personalization-terraform-state-123456789012"
-key            = "terraform/state/model-train/terraform.tfstate"
-region         = "us-east-1"
-dynamodb_table = "personalization-terraform-locks"
-encrypt        = true
+# Backend configuration lives in versions.tf.
+# Run bootstrap once if the state bucket or lock table do not exist yet:
+#   cd terraform/bootstrap && terraform init && terraform apply
