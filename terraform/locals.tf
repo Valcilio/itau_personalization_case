@@ -22,7 +22,6 @@ locals {
     TRAINING_DATA_DIR        = "/tmp/training"
     MODEL_PACKAGE_GROUP_NAME = aws_sagemaker_model_package_group.purchase_propensity.model_package_group_name
     INFERENCE_IMAGE_URI      = local.model_train_image_uri
-    CLOUDWATCH_LOG_GROUP     = aws_cloudwatch_log_group.model_train.name
     AWS_REGION               = var.aws_region
     MODEL_VERSION            = var.image_tag
     LOG_LEVEL                = "INFO"

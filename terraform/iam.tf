@@ -44,6 +44,7 @@ data "aws_iam_policy_document" "ecs_task" {
   statement {
     sid = "CloudWatchLogs"
     actions = [
+      "logs:CreateLogGroup",
       "logs:CreateLogStream",
       "logs:PutLogEvents",
       "logs:DescribeLogStreams",

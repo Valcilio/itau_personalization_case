@@ -99,7 +99,7 @@ class ModelTrainerLogger:
     ) -> logging.Handler | None:
         """Build the CloudWatch handler when the required settings are available."""
         log_group = os.getenv("CLOUDWATCH_LOG_GROUP", "").strip()
-        if not log_group:
+        if not log_group or cls._running_on_ecs():
             return None
 
         if watchtower is None:
@@ -123,6 +123,14 @@ class ModelTrainerLogger:
         cloudwatch_handler.setLevel(level)
         cloudwatch_handler.setFormatter(formatter)
         return cloudwatch_handler
+
+    @staticmethod
+    def _running_on_ecs() -> bool:
+        """Return True when the process is running inside an ECS task."""
+        return bool(
+            os.getenv("ECS_CONTAINER_METADATA_URI_V4")
+            or os.getenv("ECS_CONTAINER_METADATA_URI")
+        )
 
     def debug(self, event: str, **fields: Any) -> None:
         """Emit a debug-level structured log."""
