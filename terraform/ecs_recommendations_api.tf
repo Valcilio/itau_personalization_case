@@ -138,6 +138,8 @@ resource "aws_lb_target_group_attachment" "recommendations_nlb_alb" {
   target_group_arn = aws_lb_target_group.recommendations_nlb_alb.arn
   target_id        = aws_lb.recommendations.arn
   port             = 80
+
+  depends_on = [aws_lb_listener.recommendations]
 }
 
 resource "aws_lb_listener" "recommendations_nlb" {

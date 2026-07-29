@@ -11,7 +11,7 @@ A solução separa **treino**, **predição em batch** e **serving HTTP** em tr�
 | Aplicação | Papel |
 |-----------|--------|
 | `model_train` | Treina o classificador sklearn, publica artefato no S3 e registra versão no SageMaker Model Registry |
-| `model_predict` | Gera scores para todos os pares usuário×produto, grava snapshot no S3 e substitui a tabela DynamoDB |
+| `model_predict` | Gera scores para todos os pares usuário×produto, grava snapshot no S3 e substitui a tabela DynamoDB (usa sempre a versão do modelo que foi dada para o case) |
 | `recommendations_api` | API REST síncrona que lê predições pré-computadas e responde em tempo de requisição |
 
 **Por que batch + API leve?** O modelo scoreia ~30k pares (500 usuários × 60 produtos) por execução. Rodar feature engineering + inferência a cada `GET` aumentaria latência (centenas de ms a segundos) e custo. A API consulta DynamoDB (single-digit ms na leitura) e mantém o contrato síncrono exigido pelo case.
