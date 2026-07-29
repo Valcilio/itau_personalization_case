@@ -19,13 +19,22 @@ from recommendations_api.domain.utils.metrics import (
 
 ApiLogger.configure()
 logger = ApiLogger("main")
-metrics = create_metrics_collector()
+
+
+class _MetricsHolder:
+    """Mutable holder used to swap the metrics collector in tests without globals."""
+
+    instance: MetricsCollector = create_metrics_collector()
+
+
+def get_metrics_collector() -> MetricsCollector:
+    """Return the process-wide metrics collector."""
+    return _MetricsHolder.instance
 
 
 def set_metrics_collector(collector: MetricsCollector) -> None:
     """Override the process-wide metrics collector (used by tests)."""
-    global metrics
-    metrics = collector
+    _MetricsHolder.instance = collector
 
 
 class _HandlerHolder:
@@ -66,7 +75,7 @@ def health() -> dict[str, str]:
 def get_metrics() -> Response:
     """Expose basic Prometheus metrics."""
     return PlainTextResponse(
-        content=metrics.render_prometheus(),
+        content=get_metrics_collector().render_prometheus(),
         media_type="text/plain; version=0.0.4",
     )
 
@@ -108,7 +117,7 @@ def get_recommendation(user_id: str) -> dict[str, Any]:
         )
         raise HTTPException(status_code=500, detail="internal server error") from error
     finally:
-        metrics.observe(
+        get_metrics_collector().observe(
             latency_ms=timer.elapsed_ms(),
             is_error=is_error,
             is_cold_start=is_cold_start,
@@ -156,7 +165,7 @@ async def post_recommendation_filtered(request: Request) -> dict[str, Any]:
         )
         raise HTTPException(status_code=500, detail="internal server error") from error
     finally:
-        metrics.observe(
+        get_metrics_collector().observe(
             latency_ms=timer.elapsed_ms(),
             is_error=is_error,
             is_cold_start=is_cold_start,
