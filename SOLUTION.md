@@ -18,7 +18,9 @@ A solução separa **treino**, **predição em batch** e **serving HTTP** em tr�
 
 ### Arquitetura na AWS
 
-![Diagrama de arquitetura — Personalization Service na AWS](docs/architecture.png)
+<p align="center">
+  <img src="docs/architecture.jpeg" alt="Diagrama de arquitetura — Personalization Service na AWS" width="900" />
+</p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 
@@ -358,7 +360,7 @@ src/
 ├── model_predict/         # batch scoring → S3 + DynamoDB
 └── recommendations_api/ # FastAPI serving
 docs/
-└── architecture.png       # diagrama de arquitetura AWS
+└── architecture.jpeg      # diagrama de arquitetura AWS
 tests/                     # unitários (espelham src/)
 tests/integration/         # AWS real (3 testes)
 terraform/                 # ECS, S3, DynamoDB, API Gateway, IAM, ECR
