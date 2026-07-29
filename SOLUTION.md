@@ -19,7 +19,7 @@ A solução separa **treino**, **predição em batch** e **serving HTTP** em tr�
 ### Arquitetura na AWS
 
 <p align="center">
-  <img src="docs/architecture.jpeg" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
+  <img src="https://i.imgur.com/dm47Hfh.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
 </p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
