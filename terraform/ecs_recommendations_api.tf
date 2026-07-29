@@ -4,13 +4,6 @@ resource "aws_security_group" "recommendations_alb" {
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    from_port       = 80
-    to_port         = 80
-    protocol        = "tcp"
-    security_groups = [aws_security_group.recommendations_vpc_link.id]
-  }
-
-  ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -41,24 +34,6 @@ resource "aws_security_group" "recommendations_api" {
     protocol        = "tcp"
     security_groups = [aws_security_group.recommendations_alb.id]
   }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_security_group" "recommendations_vpc_link" {
-  name        = "${var.project_name}-recommendations-vpclink"
-  description = "Security group for API Gateway VPC Link ENIs."
-  vpc_id      = data.aws_vpc.default.id
 
   egress {
     from_port   = 0
@@ -117,6 +92,58 @@ resource "aws_lb_listener" "recommendations" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.recommendations.arn
+  }
+}
+
+resource "aws_lb" "recommendations_nlb" {
+  name               = "${var.project_name}-recs-nlb"
+  internal           = true
+  load_balancer_type = "network"
+  subnets            = data.aws_subnets.default.ids
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+resource "aws_lb_target_group" "recommendations_nlb_alb" {
+  name        = "${var.project_name}-recs-nlb-alb"
+  port        = 80
+  protocol    = "TCP"
+  target_type = "alb"
+  vpc_id      = data.aws_vpc.default.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    interval            = 30
+    protocol            = "HTTP"
+    path                = "/health"
+    matcher             = "200"
+  }
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "recommendations_nlb_alb" {
+  target_group_arn = aws_lb_target_group.recommendations_nlb_alb.arn
+  target_id        = aws_lb.recommendations.arn
+  port             = 80
+}
+
+resource "aws_lb_listener" "recommendations_nlb" {
+  load_balancer_arn = aws_lb.recommendations_nlb.arn
+  port              = 80
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.recommendations_nlb_alb.arn
   }
 }
 
@@ -250,197 +277,5 @@ resource "aws_appautoscaling_policy" "recommendations_api_memory" {
     target_value       = 70
     scale_in_cooldown  = 60
     scale_out_cooldown = 60
-  }
-}
-
-resource "aws_apigatewayv2_vpc_link" "recommendations" {
-  name               = "${var.project_name}-recommendations-vpclink"
-  security_group_ids = [aws_security_group.recommendations_vpc_link.id]
-  subnet_ids         = local.vpc_link_subnet_ids
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_apigatewayv2_api" "recommendations" {
-  name          = "${var.project_name}-recommendations-api"
-  protocol_type = "HTTP"
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_apigatewayv2_integration" "recommendations" {
-  api_id                 = aws_apigatewayv2_api.recommendations.id
-  integration_type       = "HTTP_PROXY"
-  integration_uri        = aws_lb_listener.recommendations.arn
-  integration_method     = "ANY"
-  connection_type        = "VPC_LINK"
-  connection_id          = aws_apigatewayv2_vpc_link.recommendations.id
-  payload_format_version = "1.0"
-}
-
-resource "aws_apigatewayv2_route" "recommendations_health" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "GET /health"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-}
-
-resource "aws_apigatewayv2_route" "recommendations_metrics" {
-  api_id             = aws_apigatewayv2_api.recommendations.id
-  route_key          = "GET /metrics"
-  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-  authorization_type = "CUSTOM"
-  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
-}
-
-resource "aws_apigatewayv2_route" "recommendations_get" {
-  api_id             = aws_apigatewayv2_api.recommendations.id
-  route_key          = "GET /recommendation/{user_id}"
-  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-  authorization_type = "CUSTOM"
-  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
-}
-
-resource "aws_apigatewayv2_route" "recommendations_get_plural" {
-  api_id             = aws_apigatewayv2_api.recommendations.id
-  route_key          = "GET /recommendations/{user_id}"
-  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-  authorization_type = "CUSTOM"
-  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
-}
-
-resource "aws_apigatewayv2_route" "recommendations_filtered" {
-  api_id             = aws_apigatewayv2_api.recommendations.id
-  route_key          = "POST /recommendation_filtered"
-  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-  authorization_type = "CUSTOM"
-  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
-}
-
-resource "aws_apigatewayv2_route" "recommendations_filtered_plural" {
-  api_id             = aws_apigatewayv2_api.recommendations.id
-  route_key          = "POST /recommendations_filtered"
-  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
-  authorization_type = "CUSTOM"
-  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
-}
-
-resource "aws_apigatewayv2_stage" "recommendations" {
-  api_id      = aws_apigatewayv2_api.recommendations.id
-  name        = "$default"
-  auto_deploy = true
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-data "archive_file" "recommendations_authorizer" {
-  type        = "zip"
-  source_file = "${path.module}/lambda/recommendations_authorizer/handler.py"
-  output_path = "${path.module}/.terraform/recommendations_authorizer.zip"
-}
-
-data "aws_iam_policy_document" "recommendations_authorizer_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "recommendations_authorizer" {
-  name               = "${var.project_name}-recommendations-authorizer"
-  assume_role_policy = data.aws_iam_policy_document.recommendations_authorizer_assume_role.json
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "recommendations_authorizer_basic" {
-  role       = aws_iam_role.recommendations_authorizer.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_cloudwatch_log_group" "recommendations_authorizer" {
-  name              = "/aws/lambda/${var.project_name}-recommendations-authorizer"
-  retention_in_days = 7
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_api_gateway_api_key" "recommendations" {
-  name = "${var.project_name}-recommendations-api-key"
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_lambda_function" "recommendations_authorizer" {
-  function_name = "${var.project_name}-recommendations-authorizer"
-  role          = aws_iam_role.recommendations_authorizer.arn
-  handler       = "handler.handler"
-  runtime       = "python3.12"
-  filename      = data.archive_file.recommendations_authorizer.output_path
-  source_code_hash = data.archive_file.recommendations_authorizer.output_base64sha256
-  timeout       = 5
-
-  environment {
-    variables = {
-      API_KEY = aws_api_gateway_api_key.recommendations.value
-    }
-  }
-
-  depends_on = [aws_cloudwatch_log_group.recommendations_authorizer]
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
-  }
-}
-
-resource "aws_apigatewayv2_authorizer" "recommendations" {
-  api_id                            = aws_apigatewayv2_api.recommendations.id
-  authorizer_type                   = "REQUEST"
-  authorizer_uri                    = aws_lambda_function.recommendations_authorizer.invoke_arn
-  authorizer_payload_format_version = "2.0"
-  enable_simple_responses           = true
-  identity_sources                  = ["$request.header.x-api-key"]
-  name                              = "${var.project_name}-recommendations-api-key"
-}
-
-resource "aws_lambda_permission" "recommendations_authorizer" {
-  statement_id  = "AllowAPIGatewayInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.recommendations_authorizer.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.recommendations.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.recommendations.id}"
-}
-
-resource "aws_ssm_parameter" "recommendations_api_key" {
-  name        = "/${var.project_name}/recommendations-api/api-key"
-  description = "API Gateway API key for the public recommendations API (header x-api-key)."
-  type        = "SecureString"
-  value       = aws_api_gateway_api_key.recommendations.value
-
-  tags = {
-    Project = var.project_name
-    Service = "recommendations-api"
   }
 }

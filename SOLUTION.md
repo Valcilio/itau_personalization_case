@@ -21,8 +21,8 @@ Já dentro da AWS vamos ter o seguinte:
     - Um bucket S3 que vai conter os dados para gerar as features para fazer predict do modelo e treinar o modelo (nossos csvs de event e product nesse repositório);
     - Um ECS que vai rodar o modelo atual que temos já treinado após ele ser versionado no model registry (vamos registrar ele manualmente com o terraform após subir ele no S3) e uma pasta no bucket anterior para salvar os resultados da predição dele;
     - Uma tabela DynamoDB que guarda o snapshot atual das predições (sempre substituído a cada nova execução do model_predict);
-    - Um API Gateway para servir nossa API;
-    - Um VPC Link para conectar o API Gateway que geramos com o ALB e um ECS que vai rodar o código da API, essa API terá 4 rotas: /health (GET), /recommendation/{user_id} (GET), /metrics (GET) e /recommendation_filtered (POST);
+    - Um API Gateway REST para servir nossa API com API keys nativas (usage plan);
+    - Um VPC Link conectando o API Gateway ao NLB interno, que encaminha para o ALB e o ECS da API. Rotas: /health (GET), /recommendation(s)/{user_id} (GET), /metrics (GET) e /recommendation(s)_filtered (POST);
     - Por fim teremos nossos logs sendo registrados no cloudwatch e uma pasta no bucket que tem as predições salvas para salvar os dados de métricas e outputs consumidos com timestamps e requests ids.
 
 # MODEL PREDICT

@@ -124,13 +124,13 @@ output "recommendations_api_alb_dns_name" {
 }
 
 output "recommendations_api_gateway_endpoint" {
-  description = "Public API Gateway HTTP endpoint for the recommendations API."
-  value       = aws_apigatewayv2_api.recommendations.api_endpoint
+  description = "Public API Gateway REST endpoint for the recommendations API (stage v1)."
+  value       = aws_api_gateway_stage.recommendations.invoke_url
 }
 
-output "recommendations_api_vpc_link_subnet_ids" {
-  description = "Subnet IDs used by the API Gateway VPC Link (unsupported AZs excluded)."
-  value       = local.vpc_link_subnet_ids
+output "recommendations_api_nlb_dns_name" {
+  description = "Internal NLB DNS name between REST API VPC Link and the ALB."
+  value       = aws_lb.recommendations_nlb.dns_name
 }
 
 output "recommendations_api_log_group" {
@@ -149,7 +149,7 @@ output "recommendations_api_key_ssm_parameter" {
 }
 
 output "recommendations_api_key" {
-  description = "API Gateway API key required by the HTTP API authorizer (header x-api-key)."
+  description = "API Gateway API key required by protected REST API routes (header x-api-key)."
   value       = aws_api_gateway_api_key.recommendations.value
   sensitive   = true
 }
