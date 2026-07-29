@@ -90,6 +90,24 @@ class AwsConnector:
                 native[key] = decoded
         return native
 
+    def _filter_predictions_for_user(
+        self,
+        predictions: pd.DataFrame,
+        user_id: str,
+    ) -> pd.DataFrame:
+        """Keep only rows belonging to the requested user."""
+        if predictions.empty or "user_id" not in predictions.columns:
+            return predictions
+        filtered = predictions[predictions["user_id"] == user_id].copy()
+        if len(filtered) != len(predictions):
+            self.logger.warning(
+                "dynamodb_user_rows_filtered",
+                user_id=user_id,
+                kept_rows=len(filtered),
+                dropped_rows=len(predictions) - len(filtered),
+            )
+        return filtered.reset_index(drop=True)
+
     def get_user_predictions(self, user_id: str) -> pd.DataFrame:
         """Query all prediction rows for a user from DynamoDB.
 
@@ -117,6 +135,7 @@ class AwsConnector:
         frame = pd.DataFrame([self._deserialize_item(item) for item in items])
         if not frame.empty:
             frame = self._enrich_with_categories(frame)
+        frame = self._filter_predictions_for_user(frame, user_id)
         self.logger.info(
             "dynamodb_user_query_completed",
             user_id=user_id,

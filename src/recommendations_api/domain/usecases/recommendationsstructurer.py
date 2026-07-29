@@ -54,6 +54,12 @@ class RecommendationsStructurer:
         """
         items = []
         for _, row in recommendations.iterrows():
+            if (
+                not is_cold_start
+                and "user_id" in row.index
+                and str(row["user_id"]) != user_id
+            ):
+                continue
             items.append(
                 {
                     "product_id": str(row["product_id"]),

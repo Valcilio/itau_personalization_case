@@ -59,6 +59,8 @@ class RecommendationsRetriever:
         )
 
         predictions = self.aws_connector.get_user_predictions(user_id)
+        if not predictions.empty and "user_id" in predictions.columns:
+            predictions = predictions[predictions["user_id"] == user_id].copy()
         is_cold_start = predictions.empty
         if is_cold_start:
             self.logger.info("cold_start_fallback_selected", user_id=user_id)

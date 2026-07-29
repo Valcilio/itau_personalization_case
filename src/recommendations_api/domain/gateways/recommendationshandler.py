@@ -74,6 +74,10 @@ class RecommendationsHandler:
         )
 
         predictions = self.aws_connector.get_user_predictions(filters.user_id)
+        if not predictions.empty and "user_id" in predictions.columns:
+            predictions = predictions[
+                predictions["user_id"] == filters.user_id
+            ].copy()
         is_cold_start = predictions.empty
         if is_cold_start:
             fallback_limit = filters.limit or RecommendationsRetriever.DEFAULT_LIMIT
