@@ -19,20 +19,21 @@ A solução separa **treino**, **predição em batch** e **serving HTTP** em tr�
 ### Arquitetura na AWS
 
 <p align="center">
-  <img src="docs/architecture.jpeg" alt="Diagrama de arquitetura — Personalization Service na AWS" width="900" />
+  <img src="docs/architecture.jpeg" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
 </p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 
 | Camada | Componentes | Responsabilidade |
 |--------|-------------|------------------|
-| **Continuous Training** | GitHub Actions → ECS `model_train` | Dispara o pipeline de treino a cada deploy; treina sklearn, sobe artefato para S3 e registra versão no SageMaker Model Registry |
-| **Model Versioning** | SageMaker Model Registry + S3 (`models/`) | Versiona e aprova model packages; `model_predict` consome a versão aprovada |
-| **Data Process** | S3 (`training-data/`) | Armazena `events.csv` e `products.csv` — fonte única para feature engineering |
-| **Prediction** | ECS `model_predict` → S3 + DynamoDB | Job batch: calcula scores, grava CSV versionado no S3 e substitui snapshot na tabela `personalization-predictions` |
-| **Endpoint (serving)** | API Gateway → NLB → ECS `recommendations_api` | Resposta **síncrona**: lê DynamoDB, aplica cold start/filtros e retorna JSON |
-| **Monitoring** | CloudWatch Logs | Logs JSON estruturados de treino, batch e API |
-| **Metrics Register** | DynamoDB (`personalization-api-metrics`) | Persiste contadores e latências consumidas pelo `/metrics` (Prometheus) |
+| **Code Versioning** | GitHub (repo + Actions CI/CD) | CI: `pytest` + `pylint`, tag de versão e build da imagem Docker. CD: `terraform apply`, testes de integração AWS, push para ECR e rollback se falhar |
+| **Continuous Training** | ECS `model_train` | Executa o pipeline de treino; gera nova versão do modelo sklearn |
+| **Model Versioning** | SageMaker Model Registry + S3 (`models/`) | Versiona e aprova model packages; armazena artefatos por versão |
+| **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
+| **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB |
+| **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3 |
+| **Monitoring** | CloudWatch Logs | Logs de infraestrutura e aplicação (treino, batch e API) |
+| **Metrics Register** | DynamoDB (`personalization-api-metrics`) | Métricas de API persistidas e expostas via `/metrics` (Prometheus) |
 
 Rotas expostas via API Gateway (autenticação por `x-api-key`, exceto `/health`):
 
