@@ -172,3 +172,43 @@ def test_format_predictions_for_output() -> None:
     assert "purchase_proba" not in formatted.columns
     assert (formatted["is_cold_start"] == False).all()  # noqa: E712
     assert formatted.iloc[0]["user_id"] == "u_2"
+
+
+def test_build_predictions_filename_is_unique() -> None:
+    from model_predict.main import build_predictions_filename
+
+    first = build_predictions_filename()
+    second = build_predictions_filename()
+
+    assert first.startswith("predictions_")
+    assert first.endswith(".csv")
+    assert first != second
+
+
+def test_prediction_row_to_item_converts_types() -> None:
+    from decimal import Decimal
+
+    from model_predict.domain.gateways.awsconnector import AwsConnector
+
+    row = pd.Series(
+        {
+            "user_id": "u_1",
+            "product_id": "p_1",
+            "is_cold_start": False,
+            "interactions": 2,
+            "price": 10.5,
+            "avg_rating": 4.0,
+            "popularity_score": 0.8,
+            "user_affinity_match": 1,
+            "recommendation_score": 0.91,
+        }
+    )
+
+    item = AwsConnector.prediction_row_to_item(row)
+
+    assert item["user_id"] == "u_1"
+    assert item["product_id"] == "p_1"
+    assert item["is_cold_start"] is False
+    assert item["interactions"] == 2
+    assert item["price"] == Decimal("10.5")
+    assert item["recommendation_score"] == Decimal("0.91")

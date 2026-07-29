@@ -2,11 +2,13 @@
 
 import os
 import tarfile
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlparse
 
 import boto3
 import pandas as pd
+from boto3.dynamodb.types import TypeSerializer
 
 from model_predict.domain.utils.modelrunnerlogger import ModelRunnerLogger
 
@@ -15,11 +17,13 @@ class AwsConnector:
     """Handle AWS integrations required by the prediction pipeline.
 
     Responsibilities include downloading events/products from S3, retrieving the
-    hardcoded SageMaker model package version, downloading its artifact and
-    uploading prediction outputs back to S3.
+    hardcoded SageMaker model package version, downloading its artifact,
+    uploading versioned prediction outputs to S3 and replacing DynamoDB contents
+    with the latest prediction snapshot.
     """
 
     HARDCODED_MODEL_PACKAGE_VERSION = 1
+    DYNAMODB_BATCH_SIZE = 25
 
     def __init__(self, region_name: str | None = None) -> None:
         """Initialize AWS clients for the configured region.
@@ -30,6 +34,8 @@ class AwsConnector:
         self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
         self.s3_client = boto3.client("s3", region_name=self.region_name)
         self.sagemaker_client = boto3.client("sagemaker", region_name=self.region_name)
+        self.dynamodb_client = boto3.client("dynamodb", region_name=self.region_name)
+        self._serializer = TypeSerializer()
         self.logger = ModelRunnerLogger(self.__class__.__name__)
         self.logger.info("aws_connector_initialized", region=self.region_name)
 
@@ -231,7 +237,7 @@ class AwsConnector:
             predictions: Dataframe containing purchase probabilities.
             bucket: Destination S3 bucket.
             prefix: Destination prefix inside the bucket.
-            filename: Output file name (for example ``predictions.csv``).
+            filename: Output file name (must include a unique hash/timestamp).
             local_dir: Local directory used before uploading.
 
         Returns:
@@ -251,3 +257,109 @@ class AwsConnector:
             key=object_key,
         )
         return self.upload_file(local_path, bucket, object_key)
+
+    @staticmethod
+    def prediction_row_to_item(row: pd.Series) -> dict:
+        """Convert a prediction row into a native Python item for DynamoDB.
+
+        Args:
+            row: Single formatted prediction row.
+
+        Returns:
+            Dictionary ready to be serialized into DynamoDB attribute values.
+        """
+        return {
+            "user_id": str(row["user_id"]),
+            "product_id": str(row["product_id"]),
+            "is_cold_start": bool(row["is_cold_start"]),
+            "interactions": int(row["interactions"]),
+            "price": Decimal(str(row["price"])),
+            "avg_rating": Decimal(str(row["avg_rating"])),
+            "popularity_score": Decimal(str(row["popularity_score"])),
+            "user_affinity_match": int(row["user_affinity_match"]),
+            "recommendation_score": Decimal(str(row["recommendation_score"])),
+        }
+
+    def _serialize_item(self, item: dict) -> dict:
+        """Serialize a native item into DynamoDB attribute-value format."""
+        return {key: self._serializer.serialize(value) for key, value in item.items()}
+
+    def _scan_all_keys(self, table_name: str) -> list[dict]:
+        """Scan every primary key currently stored in the predictions table."""
+        keys: list[dict] = []
+        scan_kwargs: dict = {
+            "TableName": table_name,
+            "ProjectionExpression": "user_id, product_id",
+        }
+        while True:
+            response = self.dynamodb_client.scan(**scan_kwargs)
+            keys.extend(response.get("Items", []))
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break
+            scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+        return keys
+
+    def _batch_write(self, table_name: str, request_items: list[dict]) -> None:
+        """Write DynamoDB batch requests, retrying unprocessed items."""
+        for offset in range(0, len(request_items), self.DYNAMODB_BATCH_SIZE):
+            chunk = request_items[offset : offset + self.DYNAMODB_BATCH_SIZE]
+            unprocessed = {table_name: chunk}
+            while unprocessed.get(table_name):
+                response = self.dynamodb_client.batch_write_item(
+                    RequestItems=unprocessed,
+                )
+                unprocessed = response.get("UnprocessedItems", {})
+
+    def replace_predictions_table(
+        self,
+        table_name: str,
+        predictions: pd.DataFrame,
+    ) -> int:
+        """Replace the DynamoDB table contents with the latest predictions.
+
+        Existing items are deleted and the new prediction snapshot is written in
+        full, so the table always reflects only the latest model_predict run.
+
+        Args:
+            table_name: Target DynamoDB table name.
+            predictions: Formatted prediction dataframe.
+
+        Returns:
+            Number of items written to the table.
+        """
+        self.logger.info(
+            "dynamodb_predictions_replace_started",
+            table_name=table_name,
+            incoming_rows=len(predictions),
+        )
+
+        existing_keys = self._scan_all_keys(table_name)
+        if existing_keys:
+            delete_requests = [
+                {"DeleteRequest": {"Key": key}} for key in existing_keys
+            ]
+            self._batch_write(table_name, delete_requests)
+            self.logger.info(
+                "dynamodb_predictions_cleared",
+                table_name=table_name,
+                deleted_rows=len(existing_keys),
+            )
+
+        put_requests = [
+            {
+                "PutRequest": {
+                    "Item": self._serialize_item(self.prediction_row_to_item(row)),
+                }
+            }
+            for _, row in predictions.iterrows()
+        ]
+        if put_requests:
+            self._batch_write(table_name, put_requests)
+
+        self.logger.info(
+            "dynamodb_predictions_replace_completed",
+            table_name=table_name,
+            written_rows=len(put_requests),
+        )
+        return len(put_requests)

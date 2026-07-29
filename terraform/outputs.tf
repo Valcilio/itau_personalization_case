@@ -88,6 +88,16 @@ output "predictions_prefix" {
   value       = var.predictions_prefix
 }
 
+output "predictions_dynamodb_table_name" {
+  description = "DynamoDB table replaced on every model_predict run with the latest scores."
+  value       = aws_dynamodb_table.predictions.name
+}
+
+output "predictions_dynamodb_table_arn" {
+  description = "ARN of the DynamoDB predictions table."
+  value       = aws_dynamodb_table.predictions.arn
+}
+
 output "model_train_ecs_run_task_command" {
   description = "Command to run a one-off model_train batch task."
   value = format(

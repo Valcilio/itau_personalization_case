@@ -82,6 +82,20 @@ data "aws_iam_policy_document" "ecs_task" {
     ]
     resources = ["*"]
   }
+
+  statement {
+    sid = "DynamoDBPredictions"
+    actions = [
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:DescribeTable",
+    ]
+    resources = [
+      aws_dynamodb_table.predictions.arn,
+    ]
+  }
 }
 
 resource "aws_iam_role" "ecs_task" {

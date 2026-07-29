@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
@@ -20,11 +21,23 @@ class PipelineResult:
     model_package_group_name: str
     model_package_version: int
     predictions_s3_uri: str
+    predictions_dynamodb_table: str
     prediction_rows: int
     validated_costumers: int
 
 
 logger = ModelRunnerLogger("main")
+
+
+def build_predictions_filename() -> str:
+    """Build a unique S3 object name so prediction files are never overwritten.
+
+    Returns:
+        Filename containing a UTC timestamp and a short UUID hash.
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    unique_hash = uuid.uuid4().hex[:8]
+    return f"predictions_{timestamp}_{unique_hash}.csv"
 
 
 def load_config() -> dict[str, str]:
@@ -41,21 +54,23 @@ def load_config() -> dict[str, str]:
         "DATA_BUCKET",
         "",
     ).strip()
+    predictions_table = os.getenv("PREDICTIONS_DYNAMODB_TABLE", "").strip()
     if not data_bucket:
         raise ValueError("DATA_BUCKET is required to load prediction datasets from S3")
     if not predictions_bucket:
         raise ValueError("PREDICTIONS_BUCKET or DATA_BUCKET is required to upload outputs")
+    if not predictions_table:
+        raise ValueError(
+            "PREDICTIONS_DYNAMODB_TABLE is required to replace prediction outputs"
+        )
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return {
         "data_bucket": data_bucket,
         "data_prefix": os.getenv("DATA_PREFIX", "training-data"),
         "predictions_bucket": predictions_bucket,
         "predictions_prefix": os.getenv("PREDICTIONS_PREFIX", "predictions"),
-        "predictions_filename": os.getenv(
-            "PREDICTIONS_FILENAME",
-            f"predictions_{timestamp}.csv",
-        ),
+        "predictions_filename": build_predictions_filename(),
+        "predictions_dynamodb_table": predictions_table,
         "model_package_group_name": os.getenv(
             "MODEL_PACKAGE_GROUP_NAME",
             "purchase-propensity-model-group",
@@ -103,7 +118,7 @@ def load_datasets(
 
 
 def format_predictions_for_output(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Normalize prediction output schema before persisting to S3.
+    """Normalize prediction output schema before persisting.
 
     Renames the score column, marks rows as non cold-start, sorts by identifiers
     and reorders columns to the contract expected by downstream consumers.
@@ -112,7 +127,7 @@ def format_predictions_for_output(predictions: pd.DataFrame) -> pd.DataFrame:
         predictions: Raw inference dataframe produced by ``ModelHandler``.
 
     Returns:
-        Formatted dataframe ready to be uploaded.
+        Formatted dataframe ready to be uploaded to S3 and DynamoDB.
     """
     formatted = (
         predictions.rename(columns={"purchase_proba": "recommendation_score"})
@@ -139,13 +154,15 @@ def run_prediction_pipeline() -> PipelineResult:
     """Execute the full prediction pipeline end to end.
 
     Returns:
-        Summary with output URI and prediction counts.
+        Summary with S3 URI, DynamoDB table and prediction counts.
     """
     config = load_config()
     logger.info(
         "prediction_pipeline_started",
         model_package_group_name=config["model_package_group_name"],
         model_package_version=AwsConnector.HARDCODED_MODEL_PACKAGE_VERSION,
+        predictions_filename=config["predictions_filename"],
+        predictions_dynamodb_table=config["predictions_dynamodb_table"],
     )
 
     aws_connector = AwsConnector()
@@ -175,17 +192,23 @@ def run_prediction_pipeline() -> PipelineResult:
         filename=config["predictions_filename"],
         local_dir=config["local_output_dir"],
     )
+    aws_connector.replace_predictions_table(
+        table_name=config["predictions_dynamodb_table"],
+        predictions=predictions,
+    )
 
     result = PipelineResult(
         model_package_group_name=config["model_package_group_name"],
         model_package_version=AwsConnector.HARDCODED_MODEL_PACKAGE_VERSION,
         predictions_s3_uri=predictions_s3_uri,
+        predictions_dynamodb_table=config["predictions_dynamodb_table"],
         prediction_rows=len(predictions),
         validated_costumers=handler_result.validated_costumers,
     )
     logger.info(
         "prediction_pipeline_completed",
         predictions_s3_uri=result.predictions_s3_uri,
+        predictions_dynamodb_table=result.predictions_dynamodb_table,
         prediction_rows=result.prediction_rows,
         validated_costumers=result.validated_costumers,
     )

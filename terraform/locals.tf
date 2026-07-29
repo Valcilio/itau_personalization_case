@@ -30,15 +30,16 @@ locals {
   }
 
   model_predict_environment = {
-    DATA_BUCKET              = aws_s3_bucket.data.id
-    DATA_PREFIX              = var.training_data_prefix
-    PREDICTIONS_BUCKET       = aws_s3_bucket.data.id
-    PREDICTIONS_PREFIX       = var.predictions_prefix
-    MODEL_PACKAGE_GROUP_NAME = aws_sagemaker_model_package_group.purchase_propensity.model_package_group_name
-    LOCAL_DATA_DIR           = "/tmp/prediction-data"
-    LOCAL_MODEL_DIR          = "/tmp/prediction-model"
-    LOCAL_OUTPUT_DIR         = "/tmp/prediction-output"
-    AWS_REGION               = var.aws_region
-    LOG_LEVEL                = "INFO"
+    DATA_BUCKET                = aws_s3_bucket.data.id
+    DATA_PREFIX                = var.training_data_prefix
+    PREDICTIONS_BUCKET         = aws_s3_bucket.data.id
+    PREDICTIONS_PREFIX         = var.predictions_prefix
+    PREDICTIONS_DYNAMODB_TABLE = aws_dynamodb_table.predictions.name
+    MODEL_PACKAGE_GROUP_NAME   = aws_sagemaker_model_package_group.purchase_propensity.model_package_group_name
+    LOCAL_DATA_DIR             = "/tmp/prediction-data"
+    LOCAL_MODEL_DIR            = "/tmp/prediction-model"
+    LOCAL_OUTPUT_DIR           = "/tmp/prediction-output"
+    AWS_REGION                 = var.aws_region
+    LOG_LEVEL                  = "INFO"
   }
 }

@@ -20,6 +20,7 @@ Já dentro da AWS vamos ter o seguinte:
     - Um bucket S3 onde serão salvas as versões dos modelos pelo job do sagemaker que gera a nova versão a cada run;
     - Um bucket S3 que vai conter os dados para gerar as features para fazer predict do modelo e treinar o modelo (nossos csvs de event e product nesse repositório);
     - Um ECS que vai rodar o modelo atual que temos já treinado após ele ser versionado no model registry (vamos registrar ele manualmente com o terraform após subir ele no S3) e uma pasta no bucket anterior para salvar os resultados da predição dele;
+    - Uma tabela DynamoDB que guarda o snapshot atual das predições (sempre substituído a cada nova execução do model_predict);
     - Um API Gateway para servir nossa API;
     - Um VPC Link para conectar o API Gateway que geramos com o ALB e um ECS que vai rodar o código da API, essa API terá 4 rotas: /health (GET), /recommendation/{user_id} (GET), /metrics (GET) e /recommendation_filtered (POST);
     - Por fim teremos nossos logs sendo registrados no cloudwatch e uma pasta no bucket que tem as predições salvas para salvar os dados de métricas e outputs consumidos com timestamps e requests ids.
@@ -39,17 +40,27 @@ Explicando melhor o model_predict:
         devolverá o dataset completo com todas as probabilidades para cada produto.
     Gateways:
         awsconnector.py: recuperará os dados de eventos e produtos que já temos no S3, recuperara o model package (sempre hardcoded para a versão 5 dele) e
-        também será responsável por realizar todas as conexões que forem necessárias com a AWS, ele também irá mandar os dados de outputs gerados para o S3.
+        também será responsável por realizar todas as conexões que forem necessárias com a AWS. Ele irá:
+            - salvar o output final no S3 sempre com um nome único (timestamp + hash), para nunca sobrescrever arquivos anteriores;
+            - salvar o mesmo output no DynamoDB fazendo replace completo da tabela já existente (apaga o snapshot anterior e grava o novo).
         modelhandler.py: vai extrair do model package o model.pkl e o scaler.pkl, chamar as classes de featureengineer.py e modelrunner.py para
         gerar as features e depois realizar a predição em cima das features geradas, por fim vai devolver esses dados.
     Utils:
         modelrunnerlogger.py: irá ter as configurações de logging equivalente ao que já temos no model trainer para todas as classes do
         model_predict, exceto por costumer.py.
-    Main.py: será nosso entrypoint que vai usar o awsconnector.py e o modelhandler.py para gerar as predições e salvar no S3 o output com todas elas.
+    Main.py: será nosso entrypoint que vai usar o awsconnector.py e o modelhandler.py para gerar as predições, salvar no S3 o output
+    versionado e substituir o conteúdo da tabela DynamoDB com todas as predições geradas.
+
+Persistência do output do model_predict:
+    - S3: histórico imutável por execução (`predictions_<timestamp>_<hash>.csv`).
+    - DynamoDB: estado atual consumível pela API; a cada run o conteúdo da tabela é totalmente substituído pelo novo resultado.
 
 Vale lembrar que o model_predict irá rodar dentro de um cluster ECS.
 
 # PREDICTIONS RETRIEVER API
 
 Explicando melhor a API de consumo:
+
+    Entities:
+        consumer.py: irá validar as informações obtidas
 
