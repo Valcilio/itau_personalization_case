@@ -291,39 +291,91 @@ resource "aws_apigatewayv2_route" "recommendations_health" {
 }
 
 resource "aws_apigatewayv2_route" "recommendations_metrics" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "GET /metrics"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  api_id             = aws_apigatewayv2_api.recommendations.id
+  route_key          = "GET /metrics"
+  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
 }
 
 resource "aws_apigatewayv2_route" "recommendations_get" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "GET /recommendation/{user_id}"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  api_id             = aws_apigatewayv2_api.recommendations.id
+  route_key          = "GET /recommendation/{user_id}"
+  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
 }
 
 resource "aws_apigatewayv2_route" "recommendations_get_plural" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "GET /recommendations/{user_id}"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  api_id             = aws_apigatewayv2_api.recommendations.id
+  route_key          = "GET /recommendations/{user_id}"
+  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
 }
 
 resource "aws_apigatewayv2_route" "recommendations_filtered" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "POST /recommendation_filtered"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  api_id             = aws_apigatewayv2_api.recommendations.id
+  route_key          = "POST /recommendation_filtered"
+  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
 }
 
 resource "aws_apigatewayv2_route" "recommendations_filtered_plural" {
-  api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "POST /recommendations_filtered"
-  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  api_id             = aws_apigatewayv2_api.recommendations.id
+  route_key          = "POST /recommendations_filtered"
+  target             = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.recommendations.id
 }
 
 resource "aws_apigatewayv2_stage" "recommendations" {
   api_id      = aws_apigatewayv2_api.recommendations.id
   name        = "$default"
   auto_deploy = true
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+data "archive_file" "recommendations_authorizer" {
+  type        = "zip"
+  source_file = "${path.module}/lambda/recommendations_authorizer/handler.py"
+  output_path = "${path.module}/.terraform/recommendations_authorizer.zip"
+}
+
+data "aws_iam_policy_document" "recommendations_authorizer_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "recommendations_authorizer" {
+  name               = "${var.project_name}-recommendations-authorizer"
+  assume_role_policy = data.aws_iam_policy_document.recommendations_authorizer_assume_role.json
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "recommendations_authorizer_basic" {
+  role       = aws_iam_role.recommendations_authorizer.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_cloudwatch_log_group" "recommendations_authorizer" {
+  name              = "/aws/lambda/${var.project_name}-recommendations-authorizer"
+  retention_in_days = 7
 
   tags = {
     Project = var.project_name
@@ -340,44 +392,22 @@ resource "aws_api_gateway_api_key" "recommendations" {
   }
 }
 
-resource "aws_api_gateway_usage_plan" "recommendations" {
-  name        = "${var.project_name}-recommendations-usage-plan"
-  description = "Usage plan for the public recommendations API (API key required on protected routes)."
+resource "aws_lambda_function" "recommendations_authorizer" {
+  function_name = "${var.project_name}-recommendations-authorizer"
+  role          = aws_iam_role.recommendations_authorizer.arn
+  handler       = "handler.handler"
+  runtime       = "python3.12"
+  filename      = data.archive_file.recommendations_authorizer.output_path
+  source_code_hash = data.archive_file.recommendations_authorizer.output_base64sha256
+  timeout       = 5
 
-  api_stages {
-    api_id = aws_apigatewayv2_api.recommendations.id
-    stage  = aws_apigatewayv2_stage.recommendations.name
-
-    throttle {
-      path        = "/metrics/GET"
-      burst_limit = 100
-      rate_limit  = 50
-    }
-
-    throttle {
-      path        = "/recommendation/{user_id}/GET"
-      burst_limit = 100
-      rate_limit  = 50
-    }
-
-    throttle {
-      path        = "/recommendations/{user_id}/GET"
-      burst_limit = 100
-      rate_limit  = 50
-    }
-
-    throttle {
-      path        = "/recommendation_filtered/POST"
-      burst_limit = 100
-      rate_limit  = 50
-    }
-
-    throttle {
-      path        = "/recommendations_filtered/POST"
-      burst_limit = 100
-      rate_limit  = 50
+  environment {
+    variables = {
+      API_KEY = aws_api_gateway_api_key.recommendations.value
     }
   }
+
+  depends_on = [aws_cloudwatch_log_group.recommendations_authorizer]
 
   tags = {
     Project = var.project_name
@@ -385,10 +415,22 @@ resource "aws_api_gateway_usage_plan" "recommendations" {
   }
 }
 
-resource "aws_api_gateway_usage_plan_key" "recommendations" {
-  key_id        = aws_api_gateway_api_key.recommendations.id
-  key_type      = "API_KEY"
-  usage_plan_id = aws_api_gateway_usage_plan.recommendations.id
+resource "aws_apigatewayv2_authorizer" "recommendations" {
+  api_id                            = aws_apigatewayv2_api.recommendations.id
+  authorizer_type                   = "REQUEST"
+  authorizer_uri                    = aws_lambda_function.recommendations_authorizer.invoke_arn
+  authorizer_payload_format_version = "2.0"
+  enable_simple_responses           = true
+  identity_sources                  = ["$request.header.x-api-key"]
+  name                              = "${var.project_name}-recommendations-api-key"
+}
+
+resource "aws_lambda_permission" "recommendations_authorizer" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.recommendations_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.recommendations.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.recommendations.id}"
 }
 
 resource "aws_ssm_parameter" "recommendations_api_key" {

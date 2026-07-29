@@ -149,7 +149,7 @@ output "recommendations_api_key_ssm_parameter" {
 }
 
 output "recommendations_api_key" {
-  description = "API Gateway API key required to call protected recommendations API routes."
+  description = "API Gateway API key required by the HTTP API authorizer (header x-api-key)."
   value       = aws_api_gateway_api_key.recommendations.value
   sensitive   = true
 }
