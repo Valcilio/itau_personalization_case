@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from model_train.main import run_training_pipeline
 
 from tests.helpers.aws_integration import (
@@ -9,6 +11,8 @@ from tests.helpers.aws_integration import (
     s3_object_exists,
     temporary_env,
 )
+
+pytestmark = [pytest.mark.integration, pytest.mark.order(1)]
 
 
 def test_run_training_pipeline_against_aws(terraform_outputs, integration_run_id) -> None:

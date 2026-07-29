@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import boto3
+import pytest
 
 from model_predict.main import run_prediction_pipeline
 
@@ -12,6 +13,8 @@ from tests.helpers.aws_integration import (
     s3_object_exists,
     temporary_env,
 )
+
+pytestmark = [pytest.mark.integration, pytest.mark.order(2)]
 
 
 def test_run_prediction_pipeline_against_aws(terraform_outputs, integration_run_id) -> None:

@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-import importlib
-
 import pytest
 from fastapi.testclient import TestClient
 
+from recommendations_api.domain.gateways.recommendationshandler import (
+    RecommendationsHandler,
+)
+from recommendations_api.domain.utils.metrics import create_metrics_collector
+from recommendations_api.main import app, set_handler, set_metrics_collector
 from tests.helpers.aws_integration import (
     dynamodb_table_has_items,
     recommendations_api_env,
     temporary_env,
 )
 
+pytestmark = [pytest.mark.integration, pytest.mark.order(3)]
+
 
 @pytest.fixture
-def live_app(terraform_outputs):
-    """Reload the FastAPI app with real AWS connectors (no handler mocks)."""
+def live_client(terraform_outputs):
+    """Configure the API with real AWS connectors (no mocks)."""
     env = recommendations_api_env(terraform_outputs)
     table_name = env["PREDICTIONS_DYNAMODB_TABLE"]
     if not dynamodb_table_has_items(table_name):
@@ -25,18 +30,15 @@ def live_app(terraform_outputs):
         )
 
     with temporary_env(env):
-        import recommendations_api.main as main_module
-
-        importlib.reload(main_module)
-        main_module._HandlerHolder.instance = None  # noqa: SLF001 - reset singleton
-        main_module.metrics = main_module.create_metrics_collector()
-        yield main_module.app, main_module
+        set_handler(RecommendationsHandler())
+        collector = create_metrics_collector()
+        set_metrics_collector(collector)
+        yield TestClient(app), collector
 
 
-def test_recommendations_api_reads_predictions_from_dynamodb(live_app) -> None:
+def test_recommendations_api_reads_predictions_from_dynamodb(live_client) -> None:
     """Exercise HTTP endpoints against live DynamoDB and S3-backed cold start."""
-    app, main_module = live_app
-    client = TestClient(app)
+    client, collector = live_client
 
     health = client.get("/health")
     assert health.status_code == 200
@@ -68,6 +70,4 @@ def test_recommendations_api_reads_predictions_from_dynamodb(live_app) -> None:
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "recommendations_api_requests_total" in metrics.text
-
-    # Ensure metrics persistence path was exercised (DynamoDB store).
-    assert main_module.metrics.store.__class__.__name__ == "DynamoDBMetricsStore"
+    assert collector.store.__class__.__name__ == "DynamoDBMetricsStore"

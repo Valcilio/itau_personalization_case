@@ -14,16 +14,16 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="session")
-def aws_available() -> None:
-    """Skip the integration suite when AWS credentials are unavailable."""
-    if not has_aws_credentials():
-        pytest.skip("AWS credentials are not configured for integration tests.")
+def terraform_outputs(_aws_available) -> dict[str, str]:
+    """Load deployed infrastructure outputs from Terraform."""
+    return load_terraform_outputs()
 
 
 @pytest.fixture(scope="session")
-def terraform_outputs(aws_available) -> dict[str, str]:
-    """Load deployed infrastructure outputs from Terraform."""
-    return load_terraform_outputs()
+def _aws_available() -> None:
+    """Skip the integration suite when AWS credentials are unavailable."""
+    if not has_aws_credentials():
+        pytest.skip("AWS credentials are not configured for integration tests.")
 
 
 @pytest.fixture(scope="session")

@@ -4,18 +4,17 @@ pythonpath = ["src"]
 addopts = [
     "-v",
     "--tb=short",
-    "-m",
-    "not integration",
 ]
 markers = [
-    "integration: live AWS integration tests (run with: pytest -m integration)",
+    "integration: live AWS integration tests (run with: pytest tests/integration)",
+    "order: enforce execution order for integration pipeline tests",
 ]
 
 [tool.pylint.main]
 py-version = "3.12"
 jobs = 0
 recursive = true
-ignore-paths = ["notebooks"]
+ignore-paths = ["notebooks", "tests"]
 
 [tool.pylint.messages_control]
 disable = [

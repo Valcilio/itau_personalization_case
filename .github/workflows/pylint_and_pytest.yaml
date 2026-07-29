@@ -30,5 +30,7 @@ jobs:
       - name: Run Pylint
         run: pylint src
 
-      - name: Run Pytest
+      - name: Run unit tests
+        env:
+          PYTHONPATH: src
         run: pytest

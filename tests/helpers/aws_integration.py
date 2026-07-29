@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ def has_aws_credentials() -> bool:
     try:
         boto3.client("sts").get_caller_identity()
         return True
-    except Exception:  # noqa: BLE001 - any auth/config error means unavailable
+    except (ClientError, BotoCoreError, OSError):
         return False
 
 
@@ -58,6 +58,17 @@ def load_terraform_outputs() -> dict[str, str]:
     if not outputs:
         pytest.skip("Terraform outputs are empty; deploy infrastructure first.")
     return outputs
+
+
+def require_terraform_output(outputs: dict[str, str], key: str) -> str:
+    """Return a terraform output or skip the test with a actionable message."""
+    value = outputs.get(key)
+    if not value:
+        pytest.skip(
+            f"Terraform output '{key}' is missing; run 'terraform apply' in "
+            f"{TERRAFORM_DIR} to deploy the latest infrastructure."
+        )
+    return value
 
 
 def integration_run_id() -> str:
@@ -119,12 +130,21 @@ def model_predict_env(outputs: dict[str, str], run_id: str) -> dict[str, str]:
 
 def recommendations_api_env(outputs: dict[str, str]) -> dict[str, str]:
     """Environment for the recommendations API live AWS connectors."""
+    metrics_table = os.getenv("METRICS_DYNAMODB_TABLE", "").strip()
+    if not metrics_table:
+        metrics_table = require_terraform_output(
+            outputs,
+            "api_metrics_dynamodb_table_name",
+        )
     return {
         "AWS_REGION": os.getenv("AWS_REGION", "us-east-1"),
-        "DATA_BUCKET": outputs["data_bucket_name"],
+        "DATA_BUCKET": require_terraform_output(outputs, "data_bucket_name"),
         "DATA_PREFIX": os.getenv("DATA_PREFIX", "training-data"),
-        "PREDICTIONS_DYNAMODB_TABLE": outputs["predictions_dynamodb_table_name"],
-        "METRICS_DYNAMODB_TABLE": outputs["api_metrics_dynamodb_table_name"],
+        "PREDICTIONS_DYNAMODB_TABLE": require_terraform_output(
+            outputs,
+            "predictions_dynamodb_table_name",
+        ),
+        "METRICS_DYNAMODB_TABLE": metrics_table,
         "LOG_LEVEL": "INFO",
     }
 
