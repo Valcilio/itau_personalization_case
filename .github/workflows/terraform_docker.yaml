@@ -154,3 +154,51 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=model-predict
           cache-to: type=gha,mode=max,scope=model-predict
+
+  push-recommendations-api-image:
+    name: Push recommendations-api Image to ECR
+    runs-on: ubuntu-latest
+    needs: deploy-terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-recommendations-api:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-recommendations-api:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push recommendations-api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/recommendations_api/Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=recommendations-api
+          cache-to: type=gha,mode=max,scope=recommendations-api

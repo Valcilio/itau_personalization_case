@@ -45,3 +45,33 @@ variable "model_package_group_name" {
   default     = "purchase-propensity-model-group"
 }
 
+variable "recommendations_api_cpu" {
+  description = "CPU units for the recommendations API Fargate tasks."
+  type        = string
+  default     = "512"
+}
+
+variable "recommendations_api_memory" {
+  description = "Memory in MiB for the recommendations API Fargate tasks."
+  type        = string
+  default     = "1024"
+}
+
+variable "recommendations_api_desired_count" {
+  description = "Initial desired task count for the recommendations API service."
+  type        = number
+  default     = 1
+}
+
+variable "recommendations_api_min_capacity" {
+  description = "Minimum autoscaling capacity for the recommendations API service."
+  type        = number
+  default     = 1
+}
+
+variable "recommendations_api_max_capacity" {
+  description = "Maximum autoscaling capacity for the recommendations API service."
+  type        = number
+  default     = 20
+}
+

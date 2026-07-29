@@ -57,10 +57,70 @@ Persistência do output do model_predict:
 
 Vale lembrar que o model_predict irá rodar dentro de um cluster ECS.
 
-# PREDICTIONS RETRIEVER API
+# RECOMMENDATIONS API
 
 Explicando melhor a API de consumo:
 
     Entities:
-        consumer.py: irá validar as informações obtidas
+        user.py: irá validar as informações obtidas através da API, no caso teremos a possibilidade de receber requests do tipo GET ou POST.
+            - Se for /recommendation/{user_id} (GET) ela deve validar se o user_id é entendido como válido seguindo o padrão de "u_0231" e similar;
+            - Se for /recommendation_filtered (POST) ela deve validar o user_id com o mesmo padrão e também os filtros enviados no body;
+                - Filtros planejados para POST /recommendation_filtered:
+                        Fluxo geral:
+                            1. Buscar as predições do user_id no DynamoDB (ou aplicar cold start se o usuário não existir);
+                            2. Aplicar os filtros abaixo sobre o conjunto de produtos ranqueados;
+                            3. Ordenar pelo recommendation_score do modelo (desc);
+                            4. Aplicar o limit e retornar o resultado.
+                        Filtros do case (obrigatórios no contrato da API):
+                            - user_id (obrigatório): identifica o usuário alvo da recomendação;
+                            - limit (opcional): quantidade máxima de produtos retornados após o ranking filtrado;
+                            - exclude_product_ids (opcional): remove product_ids da resposta (ex.: itens já no carrinho ou já visualizados);
+                            - context (opcional): metadados da requisição (ex.: device, campaign). Neste case não altera o score do modelo;
+                            deve ser registrado em logs estruturados e documentado para uso futuro em produção
+                            (ex.: re-ranking por canal, campanhas, experimentos A/B).
+                        Filtros extras planejados (usando o schema de products/predictions):
+                            - categories / exclude_categories: inclui ou remove produtos por categoria
+                            (beleza, casa, eletronicos, esporte, livros, moda);
+                            - min_price / max_price: restringe a faixa de preço;
+                            - min_avg_rating: remove produtos abaixo da avaliação mínima;
+                            - min_popularity_score: remove produtos pouco populares;
+                            - min_recommendation_score: corta itens com score do modelo abaixo do limiar;
+                            - only_affinity_match: mantém apenas produtos com user_affinity_match = 1;
+                            - exclude_cold_start: quando houver fallback de cold start, permite omitir esses itens
+                            se a API quiser expor apenas scores “quentes”.
+                        Validação esperada no POST:
+                            - user_id no padrão u_XXXX;
+                            - limit > 0 quando informado;
+                            - exclude_product_ids / categories como listas de strings válidas;
+                            - faixas numéricas coerentes (ex.: min_price <= max_price; scores entre 0 e 1 quando aplicável).
+            - Se for /health ou metrics, não precisaremos válidar nada.
 
+    Use Cases:
+        recomendationsretriever.py: vai recuperar as Top10 recomendações para o usuário solicitado, a conexão vai ser passada como um atributo para essa classe;
+        recommendationsfilter.py: vai filtrar as recomendações com base no que for passado caso tenha sido uma requisição usando o /recommnedation_filtered;
+        recommendationsstructurer.py: responsável por estruturar os dados para que possam ser devolvidos adequadamente quando recomendado;
+            - se for uma request no /recommendation o dado deve devolver apenas o que foi pedido em README.md;
+            - se for uma request no /recommendation_filtered, deve devolver tudo que vem do MongoDB, naturalmente passando pelos filtros passados no request.
+    
+    Gateways:
+        awsconnector.py: vai lidar com todas as conexões e operações que precisarmos fazer na AWS;
+        recommendationshandler.py: vai orquestrar as classes vindas dos casos de uso com recommendations no nome;
+
+    Utils:
+        apilogger.py: irá ter as configurações de logging equivalente ao que já temos no model trainer para todas as classes do
+        recommendations_api, exceto por user.py.
+
+    main.py: vai servir como entrypoint chamando as classes da camada de gateways para fazer todo o processo de recuperar e devolver a(s) recomendações solicitadas.
+        - precisaremos ter os 4 entrypoints planejados aqui:
+            - /health: vai indicar se a API está funcional;
+            - /metrics: precisará trazer as métricas solicitadas no README.md;
+            - /recommendation/{user_id}: vai precisar devolver as recomendações solicitadas para o usuário especificado;
+            - /recommendation_filtered: vai precisar devolver as recomendações solicitadas com base nos filtros passados.
+
+Lembrando que aqui teremos um cluster ECS onde esse código vai rodar, um application load balancer para que ele possa se conectar em um API Gateway via VPC Link e o API Gateway e VPC Link propriamente ditos,
+Vale lembrar que o cluster ECS aqui vai precisar de uma configuração de autoscaling sendo que, se ele usar até 70% da sua memória ou CPU, precisa começar a criar outras tasks até um máximo de 20 tasks.
+Fora que é um serviço online e não batch como os outros dois casos.
+
+OBS1: Importante lembrar que os dados recuperados daqui devem vir da tabela de predições do DynamoDB que criamos anteriormente.
+OBS2: Outro ponto importante é que a API deve poder ser acessada de qualquer lugar da internet sem limitação de IP, porém deve requerir uma API Key ou algum outro método de autenticação.
+OBS3: Lembre que para lidar com cold_start cases, nós iremos substituir o recommendation score pelo popularity score e também precisamos sempre devolver o cold_start_flag indicando se o usuário é cold_start ou não.

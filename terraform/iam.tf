@@ -54,6 +54,8 @@ data "aws_iam_policy_document" "ecs_task" {
       "${aws_cloudwatch_log_group.model_train.arn}:*",
       aws_cloudwatch_log_group.model_predict.arn,
       "${aws_cloudwatch_log_group.model_predict.arn}:*",
+      aws_cloudwatch_log_group.recommendations_api.arn,
+      "${aws_cloudwatch_log_group.recommendations_api.arn}:*",
     ]
   }
 
@@ -87,6 +89,8 @@ data "aws_iam_policy_document" "ecs_task" {
     sid = "DynamoDBPredictions"
     actions = [
       "dynamodb:Scan",
+      "dynamodb:Query",
+      "dynamodb:GetItem",
       "dynamodb:BatchWriteItem",
       "dynamodb:PutItem",
       "dynamodb:DeleteItem",
@@ -94,6 +98,7 @@ data "aws_iam_policy_document" "ecs_task" {
     ]
     resources = [
       aws_dynamodb_table.predictions.arn,
+      "${aws_dynamodb_table.predictions.arn}/index/*",
     ]
   }
 }

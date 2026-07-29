@@ -98,6 +98,52 @@ output "predictions_dynamodb_table_arn" {
   value       = aws_dynamodb_table.predictions.arn
 }
 
+output "recommendations_api_ecr_repository_url" {
+  description = "ECR repository URL for the recommendations API image."
+  value       = aws_ecr_repository.services["recommendations_api"].repository_url
+}
+
+output "recommendations_api_image_uri" {
+  description = "Full Docker image URI used by the recommendations API service."
+  value       = local.recommendations_api_image_uri
+}
+
+output "recommendations_api_ecs_cluster_name" {
+  description = "ECS cluster running the online recommendations API."
+  value       = aws_ecs_cluster.recommendations_api.name
+}
+
+output "recommendations_api_ecs_service_name" {
+  description = "ECS service name for the recommendations API."
+  value       = aws_ecs_service.recommendations_api.name
+}
+
+output "recommendations_api_alb_dns_name" {
+  description = "Internal ALB DNS name fronting the recommendations API."
+  value       = aws_lb.recommendations.dns_name
+}
+
+output "recommendations_api_gateway_endpoint" {
+  description = "Public API Gateway HTTP endpoint for the recommendations API."
+  value       = aws_apigatewayv2_api.recommendations.api_endpoint
+}
+
+output "recommendations_api_log_group" {
+  description = "CloudWatch log group used by the recommendations API container."
+  value       = aws_cloudwatch_log_group.recommendations_api.name
+}
+
+output "recommendations_api_key_ssm_parameter" {
+  description = "SSM parameter containing the public API key (header x-api-key)."
+  value       = aws_ssm_parameter.recommendations_api_key.name
+}
+
+output "recommendations_api_key" {
+  description = "API key required to call the public recommendations API."
+  value       = random_password.recommendations_api_key.result
+  sensitive   = true
+}
+
 output "model_train_ecs_run_task_command" {
   description = "Command to run a one-off model_train batch task."
   value = format(
