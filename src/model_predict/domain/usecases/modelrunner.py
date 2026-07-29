@@ -46,9 +46,10 @@ class ModelRunner:
             rows=len(features),
         )
 
-        probabilities = self.model.predict_proba(
-            scaled_features[self.FEATURE_COLUMNS].astype(float)
-        )[:, 1]
+        feature_matrix = (
+            scaled_features[self.FEATURE_COLUMNS].astype(float).to_numpy()
+        )
+        probabilities = self.model.predict_proba(feature_matrix)[:, 1]
 
         predictions = features.copy()
         predictions[self.PROBABILITY_COLUMN] = probabilities

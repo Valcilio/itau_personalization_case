@@ -214,7 +214,10 @@ class AwsConnector:
         self.download_file(bucket, key, archive_path)
 
         with tarfile.open(archive_path, "r:gz") as archive:
-            archive.extractall(extract_dir)
+            extract_kwargs: dict[str, str] = {}
+            if hasattr(tarfile, "data_filter"):
+                extract_kwargs["filter"] = "data"
+            archive.extractall(extract_dir, **extract_kwargs)
 
         self.logger.info(
             "model_artifact_download_completed",
