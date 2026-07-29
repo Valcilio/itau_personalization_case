@@ -102,6 +102,39 @@ def load_datasets(
     return events, products
 
 
+def format_predictions_for_output(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Normalize prediction output schema before persisting to S3.
+
+    Renames the score column, marks rows as non cold-start, sorts by identifiers
+    and reorders columns to the contract expected by downstream consumers.
+
+    Args:
+        predictions: Raw inference dataframe produced by ``ModelHandler``.
+
+    Returns:
+        Formatted dataframe ready to be uploaded.
+    """
+    formatted = (
+        predictions.rename(columns={"purchase_proba": "recommendation_score"})
+        .sort_values(["user_id", "product_id"], ascending=False)
+        .reset_index(drop=True)
+    )
+    formatted["is_cold_start"] = False
+    return formatted[
+        [
+            "user_id",
+            "product_id",
+            "is_cold_start",
+            "interactions",
+            "price",
+            "avg_rating",
+            "popularity_score",
+            "user_affinity_match",
+            "recommendation_score",
+        ]
+    ]
+
+
 def run_prediction_pipeline() -> PipelineResult:
     """Execute the full prediction pipeline end to end.
 
@@ -128,9 +161,15 @@ def run_prediction_pipeline() -> PipelineResult:
         products=products,
         artifact_dir=artifact_dir,
     )
+    predictions = format_predictions_for_output(handler_result.predictions)
+    logger.info(
+        "predictions_formatted_for_output",
+        rows=len(predictions),
+        columns=list(predictions.columns),
+    )
 
     predictions_s3_uri = aws_connector.upload_predictions(
-        predictions=handler_result.predictions,
+        predictions=predictions,
         bucket=config["predictions_bucket"],
         prefix=config["predictions_prefix"],
         filename=config["predictions_filename"],
@@ -141,7 +180,7 @@ def run_prediction_pipeline() -> PipelineResult:
         model_package_group_name=config["model_package_group_name"],
         model_package_version=AwsConnector.HARDCODED_MODEL_PACKAGE_VERSION,
         predictions_s3_uri=predictions_s3_uri,
-        prediction_rows=len(handler_result.predictions),
+        prediction_rows=len(predictions),
         validated_costumers=handler_result.validated_costumers,
     )
     logger.info(

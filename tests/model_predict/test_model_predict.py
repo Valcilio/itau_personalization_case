@@ -138,3 +138,37 @@ def test_model_handler_loads_artifact_and_predicts(tmp_path: Path) -> None:
     assert result.validated_costumers == 4
     assert len(result.predictions) == 4
     assert "purchase_proba" in result.predictions.columns
+
+
+def test_format_predictions_for_output() -> None:
+    from model_predict.main import format_predictions_for_output
+
+    predictions = pd.DataFrame(
+        {
+            "user_id": ["u_1", "u_2"],
+            "product_id": ["p_1", "p_2"],
+            "interactions": [2, 0],
+            "price": [10.0, 20.0],
+            "avg_rating": [4.0, 3.5],
+            "popularity_score": [0.8, 0.2],
+            "user_affinity_match": [1, 0],
+            "purchase_proba": [0.9, 0.1],
+        }
+    )
+
+    formatted = format_predictions_for_output(predictions)
+
+    assert list(formatted.columns) == [
+        "user_id",
+        "product_id",
+        "is_cold_start",
+        "interactions",
+        "price",
+        "avg_rating",
+        "popularity_score",
+        "user_affinity_match",
+        "recommendation_score",
+    ]
+    assert "purchase_proba" not in formatted.columns
+    assert (formatted["is_cold_start"] == False).all()  # noqa: E712
+    assert formatted.iloc[0]["user_id"] == "u_2"
