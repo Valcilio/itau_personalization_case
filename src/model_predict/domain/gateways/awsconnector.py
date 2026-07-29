@@ -19,7 +19,7 @@ class AwsConnector:
     uploading prediction outputs back to S3.
     """
 
-    HARDCODED_MODEL_PACKAGE_VERSION = 5
+    HARDCODED_MODEL_PACKAGE_VERSION = 1
 
     def __init__(self, region_name: str | None = None) -> None:
         """Initialize AWS clients for the configured region.
