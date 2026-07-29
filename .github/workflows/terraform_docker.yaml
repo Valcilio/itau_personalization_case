@@ -25,6 +25,8 @@ jobs:
   deploy-terraform:
     name: Apply Terraform
     runs-on: ubuntu-latest
+    outputs:
+      rollback_image_tag: ${{ steps.previous-tag.outputs.image_tag }}
     defaults:
       run:
         working-directory: terraform
@@ -48,6 +50,26 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
+      - name: Capture rollback image tag
+        id: previous-tag
+        run: |
+          if IMAGE_URI="$(terraform output -raw model_train_image_uri 2>/dev/null)"; then
+            ROLLBACK_TAG="${IMAGE_URI##*:}"
+          else
+            ROLLBACK_TAG="UAT"
+          fi
+          echo "image_tag=${ROLLBACK_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Backup Terraform state before apply
+        run: terraform state pull > "${GITHUB_WORKSPACE}/terraform-state.backup"
+
+      - name: Upload pre-apply state backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-state-backup
+          path: terraform-state.backup
+          retention-days: 1
+
       - name: Terraform Validate
         run: terraform validate
 
@@ -60,7 +82,9 @@ jobs:
   push-model-train-image:
     name: Push model-train Image to ECR
     runs-on: ubuntu-latest
-    needs: deploy-terraform
+    needs:
+      - deploy-terraform
+      - integration-tests
 
     steps:
       - name: Checkout
@@ -110,7 +134,9 @@ jobs:
   push-model-predict-image:
     name: Push model-predict Image to ECR
     runs-on: ubuntu-latest
-    needs: deploy-terraform
+    needs:
+      - deploy-terraform
+      - integration-tests
 
     steps:
       - name: Checkout
@@ -158,7 +184,9 @@ jobs:
   push-recommendations-api-image:
     name: Push recommendations-api Image to ECR
     runs-on: ubuntu-latest
-    needs: deploy-terraform
+    needs:
+      - deploy-terraform
+      - integration-tests
 
     steps:
       - name: Checkout
@@ -202,3 +230,58 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=recommendations-api
           cache-to: type=gha,mode=max,scope=recommendations-api
+
+  integration-tests:
+    name: AWS Integration Tests
+    needs:
+      - deploy-terraform
+    uses: ./.github/workflows/integration_tests.yaml
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  rollback-terraform:
+    name: Rollback Terraform After Failed Integration Tests
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+      - integration-tests
+    if: ${{ failure() && needs.deploy-terraform.result == 'success' && needs.integration-tests.result == 'failure' }}
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Download pre-apply state backup
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-state-backup
+          path: state-backup
+
+      - name: Restore Terraform state
+        run: terraform state push -force "${GITHUB_WORKSPACE}/state-backup/terraform-state.backup"
+
+      - name: Reconcile AWS with restored state
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var="image_tag=${{ needs.deploy-terraform.outputs.rollback_image_tag }}" \
+            -var="aws_region=${{ secrets.AWS_REGION }}"

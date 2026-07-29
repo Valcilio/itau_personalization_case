@@ -12,7 +12,6 @@ from prometheus_client.core import (
 )
 
 from recommendations_api.domain.gateways.metricsstore import (
-    InMemoryMetricsStore,
     MetricsStore,
     build_metrics_store,
 )
@@ -112,5 +111,5 @@ class Timer:
 
 
 def create_metrics_collector(store: MetricsStore | None = None) -> MetricsCollector:
-    """Build a metrics collector, defaulting to in-memory storage in tests."""
-    return MetricsCollector(store=store or InMemoryMetricsStore())
+    """Build a metrics collector from env or an explicit store."""
+    return MetricsCollector(store=store)
