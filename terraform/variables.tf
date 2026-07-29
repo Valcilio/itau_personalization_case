@@ -21,14 +21,20 @@ variable "training_data_prefix" {
   default     = "training-data"
 }
 
+variable "predictions_prefix" {
+  description = "S3 prefix where model_predict writes prediction outputs."
+  type        = string
+  default     = "predictions"
+}
+
 variable "ecs_task_cpu" {
-  description = "CPU units for the ECS Fargate training task (4096 = 4 vCPU)."
+  description = "CPU units for the ECS Fargate tasks (4096 = 4 vCPU)."
   type        = string
   default     = "4096"
 }
 
 variable "ecs_task_memory" {
-  description = "Memory in MiB for the ECS Fargate training task (8192 = 8 GiB)."
+  description = "Memory in MiB for the ECS Fargate tasks (8192 = 8 GiB)."
   type        = string
   default     = "8192"
 }

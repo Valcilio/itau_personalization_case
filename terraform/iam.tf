@@ -15,7 +15,7 @@ resource "aws_iam_role" "ecs_task_execution" {
 
   tags = {
     Project = var.project_name
-    Service = "model-train"
+    Service = "ecs"
   }
 }
 
@@ -52,6 +52,8 @@ data "aws_iam_policy_document" "ecs_task" {
     resources = [
       aws_cloudwatch_log_group.model_train.arn,
       "${aws_cloudwatch_log_group.model_train.arn}:*",
+      aws_cloudwatch_log_group.model_predict.arn,
+      "${aws_cloudwatch_log_group.model_predict.arn}:*",
     ]
   }
 
@@ -88,7 +90,7 @@ resource "aws_iam_role" "ecs_task" {
 
   tags = {
     Project = var.project_name
-    Service = "model-train"
+    Service = "ecs"
   }
 }
 

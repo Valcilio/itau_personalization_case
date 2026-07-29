@@ -24,7 +24,7 @@ jobs:
     uses: ./.github/workflows/cicd_general.yaml
 
   cd-docker-and-terraform:
-    name: CD - model-train Deploy
+    name: CD - model-train and model-predict Deploy
     needs: ci-tag-release
     if: github.event_name != 'pull_request'
     permissions:

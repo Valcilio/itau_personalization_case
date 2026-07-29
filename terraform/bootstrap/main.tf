@@ -1,9 +1,9 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  account_id   = data.aws_caller_identity.current.account_id
-  bucket_name  = "${var.project_name}-terraform-state-${local.account_id}"
-  lock_table   = "${var.project_name}-terraform-locks"
+  account_id  = data.aws_caller_identity.current.account_id
+  bucket_name = "${var.project_name}-terraform-state-${local.account_id}"
+  lock_table  = "${var.project_name}-terraform-locks"
 }
 
 resource "aws_s3_bucket" "terraform_state" {

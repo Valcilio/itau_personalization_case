@@ -1,5 +1,5 @@
 output "data_bucket_name" {
-  description = "S3 bucket used to store events.csv and products.csv."
+  description = "S3 bucket used to store events.csv, products.csv and prediction outputs."
   value       = aws_s3_bucket.data.id
 }
 
@@ -13,9 +13,19 @@ output "model_train_ecr_repository_url" {
   value       = aws_ecr_repository.services["model_train"].repository_url
 }
 
+output "model_predict_ecr_repository_url" {
+  description = "ECR repository URL for the model_predict image."
+  value       = aws_ecr_repository.services["model_predict"].repository_url
+}
+
 output "model_train_image_uri" {
   description = "Full Docker image URI used by the ECS training task."
   value       = local.model_train_image_uri
+}
+
+output "model_predict_image_uri" {
+  description = "Full Docker image URI used by the ECS prediction task."
+  value       = local.model_predict_image_uri
 }
 
 output "model_train_ecs_cluster_name" {
@@ -23,9 +33,19 @@ output "model_train_ecs_cluster_name" {
   value       = aws_ecs_cluster.model_train.name
 }
 
+output "model_predict_ecs_cluster_name" {
+  description = "ECS cluster responsible for running model_predict."
+  value       = aws_ecs_cluster.model_predict.name
+}
+
 output "model_train_ecs_task_definition_arn" {
   description = "ECS task definition used to run model_train."
   value       = aws_ecs_task_definition.model_train.arn
+}
+
+output "model_predict_ecs_task_definition_arn" {
+  description = "ECS task definition used to run model_predict."
+  value       = aws_ecs_task_definition.model_predict.arn
 }
 
 output "model_package_group_name" {
@@ -38,8 +58,13 @@ output "model_train_log_group" {
   value       = aws_cloudwatch_log_group.model_train.name
 }
 
+output "model_predict_log_group" {
+  description = "CloudWatch log group used by the model_predict container."
+  value       = aws_cloudwatch_log_group.model_predict.name
+}
+
 output "model_train_ecs_task_role_arn" {
-  description = "IAM role assumed by the ECS training task."
+  description = "IAM role assumed by the ECS training and prediction tasks."
   value       = aws_iam_role.ecs_task.arn
 }
 
@@ -48,9 +73,19 @@ output "model_train_ecs_security_group_id" {
   value       = aws_security_group.model_train.id
 }
 
+output "model_predict_ecs_security_group_id" {
+  description = "Security group used by the ECS prediction task."
+  value       = aws_security_group.model_predict.id
+}
+
 output "model_train_ecs_subnet_ids" {
-  description = "Default VPC subnet IDs used by the ECS training task."
+  description = "Default VPC subnet IDs used by the ECS tasks."
   value       = data.aws_subnets.default.ids
+}
+
+output "predictions_prefix" {
+  description = "S3 prefix where model_predict writes prediction outputs."
+  value       = var.predictions_prefix
 }
 
 output "model_train_ecs_run_task_command" {
@@ -62,5 +97,17 @@ output "model_train_ecs_run_task_command" {
     aws_ecs_task_definition.model_train.family,
     join(",", data.aws_subnets.default.ids),
     aws_security_group.model_train.id,
+  )
+}
+
+output "model_predict_ecs_run_task_command" {
+  description = "Command to run a one-off model_predict batch task."
+  value = format(
+    "aws ecs run-task --region %s --cluster %s --task-definition %s --launch-type FARGATE --network-configuration \"awsvpcConfiguration={subnets=[%s],securityGroups=[%s],assignPublicIp=ENABLED}\"",
+    var.aws_region,
+    aws_ecs_cluster.model_predict.name,
+    aws_ecs_task_definition.model_predict.family,
+    join(",", data.aws_subnets.default.ids),
+    aws_security_group.model_predict.id,
   )
 }

@@ -1,17 +1,6 @@
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
-resource "aws_security_group" "model_train" {
-  name        = "${var.project_name}-model-train-ecs"
-  description = "Security group for the model_train ECS task."
+resource "aws_security_group" "model_predict" {
+  name        = "${var.project_name}-model-predict-ecs"
+  description = "Security group for the model_predict ECS task."
   vpc_id      = data.aws_vpc.default.id
 
   egress {
@@ -23,21 +12,21 @@ resource "aws_security_group" "model_train" {
 
   tags = {
     Project = var.project_name
-    Service = "model-train"
+    Service = "model-predict"
   }
 }
 
-resource "aws_ecs_cluster" "model_train" {
-  name = "${var.project_name}-model-train"
+resource "aws_ecs_cluster" "model_predict" {
+  name = "${var.project_name}-model-predict"
 
   tags = {
     Project = var.project_name
-    Service = "model-train"
+    Service = "model-predict"
   }
 }
 
-resource "aws_ecs_task_definition" "model_train" {
-  family                   = "${var.project_name}-model-train"
+resource "aws_ecs_task_definition" "model_predict" {
+  family                   = "${var.project_name}-model-predict"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.ecs_task_cpu
@@ -47,11 +36,11 @@ resource "aws_ecs_task_definition" "model_train" {
 
   container_definitions = jsonencode([
     {
-      name      = "model-train"
-      image     = local.model_train_image_uri
+      name      = "model-predict"
+      image     = local.model_predict_image_uri
       essential = true
       environment = [
-        for key, value in local.model_train_environment : {
+        for key, value in local.model_predict_environment : {
           name  = key
           value = value
         }
@@ -59,9 +48,9 @@ resource "aws_ecs_task_definition" "model_train" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.model_train.name
+          awslogs-group         = aws_cloudwatch_log_group.model_predict.name
           awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "model-train"
+          awslogs-stream-prefix = "model-predict"
         }
       }
     }
@@ -69,6 +58,6 @@ resource "aws_ecs_task_definition" "model_train" {
 
   tags = {
     Project = var.project_name
-    Service = "model-train"
+    Service = "model-predict"
   }
 }
