@@ -138,14 +138,19 @@ output "recommendations_api_log_group" {
   value       = aws_cloudwatch_log_group.recommendations_api.name
 }
 
+output "recommendations_api_key_id" {
+  description = "API Gateway API key identifier for the recommendations API."
+  value       = aws_api_gateway_api_key.recommendations.id
+}
+
 output "recommendations_api_key_ssm_parameter" {
-  description = "SSM parameter containing the public API key (header x-api-key)."
+  description = "SSM parameter containing the API Gateway API key (header x-api-key)."
   value       = aws_ssm_parameter.recommendations_api_key.name
 }
 
 output "recommendations_api_key" {
-  description = "API key required to call the public recommendations API."
-  value       = random_password.recommendations_api_key.result
+  description = "API Gateway API key required to call protected recommendations API routes."
+  value       = aws_api_gateway_api_key.recommendations.value
   sensitive   = true
 }
 

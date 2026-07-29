@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 
 from recommendations_api.domain.gateways.recommendationshandler import (
     RecommendationsHandler,
@@ -17,7 +16,6 @@ from recommendations_api.domain.utils.metrics import MetricsCollector, Timer
 ApiLogger.configure()
 logger = ApiLogger("main")
 metrics = MetricsCollector()
-PUBLIC_PATHS = {"/health"}
 
 
 class _HandlerHolder:
@@ -31,7 +29,7 @@ app = FastAPI(
     version="1.0.0",
     description=(
         "Serving purchase-propensity recommendations from the DynamoDB "
-        "predictions table. Protected by x-api-key."
+        "predictions table. Public access is enforced by API Gateway API keys."
     ),
 )
 
@@ -46,41 +44,6 @@ def get_handler() -> RecommendationsHandler:
 def set_handler(handler: RecommendationsHandler) -> None:
     """Override the process-wide handler (used by tests)."""
     _HandlerHolder.instance = handler
-
-
-def _expected_api_key() -> str:
-    """Return the API key configured for request authentication."""
-    return os.getenv("RECOMMENDATIONS_API_KEY", "").strip()
-
-
-@app.middleware("http")
-async def require_api_key(request: Request, call_next: Callable):
-    """Require ``x-api-key`` for all routes except health checks.
-
-    The service is intentionally reachable from the public internet through API
-    Gateway with no IP allowlist. Authentication is enforced via API key.
-    """
-    if request.url.path in PUBLIC_PATHS:
-        return await call_next(request)
-
-    expected = _expected_api_key()
-    if not expected:
-        logger.error("api_key_not_configured")
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "RECOMMENDATIONS_API_KEY is not configured"},
-        )
-
-    provided = request.headers.get("x-api-key", "").strip()
-    if provided != expected:
-        logger.warning(
-            "api_key_rejected",
-            path=request.url.path,
-            has_header=bool(provided),
-        )
-        return JSONResponse(status_code=401, content={"detail": "invalid api key"})
-
-    return await call_next(request)
 
 
 @app.get("/health")

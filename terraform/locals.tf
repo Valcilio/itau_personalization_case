@@ -53,7 +53,6 @@ locals {
     DATA_BUCKET                = aws_s3_bucket.data.id
     DATA_PREFIX                = var.training_data_prefix
     PREDICTIONS_DYNAMODB_TABLE = aws_dynamodb_table.predictions.name
-    RECOMMENDATIONS_API_KEY    = random_password.recommendations_api_key.result
     AWS_REGION                 = var.aws_region
     LOG_LEVEL                  = "INFO"
   }

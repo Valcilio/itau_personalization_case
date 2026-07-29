@@ -17,17 +17,6 @@ from recommendations_api.domain.usecases.recommendationsstructurer import (
 )
 from recommendations_api.main import app, set_handler
 
-TEST_API_KEY = "test-api-key"
-
-
-@pytest.fixture(autouse=True)
-def _configure_api_key(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("RECOMMENDATIONS_API_KEY", TEST_API_KEY)
-
-
-def _auth_headers() -> dict[str, str]:
-    return {"x-api-key": TEST_API_KEY}
-
 
 class FakeAwsConnector:
     def __init__(self, predictions: pd.DataFrame, products: pd.DataFrame) -> None:
@@ -163,7 +152,7 @@ def test_filter_applies_exclude_and_category() -> None:
 def test_get_recommendation_endpoint() -> None:
     set_handler(_build_handler())
     client = TestClient(app)
-    response = client.get("/recommendation/u_0231", headers=_auth_headers())
+    response = client.get("/recommendation/u_0231")
     assert response.status_code == 200
     body = response.json()
     assert body["user_id"] == "u_0231"
@@ -172,24 +161,17 @@ def test_get_recommendation_endpoint() -> None:
     assert "score" in body["recommendations"][0]
 
 
-def test_get_recommendation_requires_api_key() -> None:
-    set_handler(_build_handler())
-    client = TestClient(app)
-    response = client.get("/recommendation/u_0231")
-    assert response.status_code == 401
-
-
 def test_get_recommendation_invalid_user() -> None:
     set_handler(_build_handler())
     client = TestClient(app)
-    response = client.get("/recommendation/bad_user", headers=_auth_headers())
+    response = client.get("/recommendation/bad_user")
     assert response.status_code == 400
 
 
 def test_cold_start_endpoint() -> None:
     set_handler(_build_handler())
     client = TestClient(app)
-    response = client.get("/recommendations/u_9999", headers=_auth_headers())
+    response = client.get("/recommendations/u_9999")
     assert response.status_code == 200
     body = response.json()
     assert body["cold_start_flag"] is True
@@ -207,7 +189,6 @@ def test_filtered_endpoint_integration() -> None:
 
     response = client.post(
         "/recommendation_filtered",
-        headers=_auth_headers(),
         json={
             "user_id": "u_0231",
             "limit": 2,
@@ -224,6 +205,6 @@ def test_filtered_endpoint_integration() -> None:
     assert all("recommendation_score" in item for item in body["recommendations"])
     assert all(item["product_id"] != "p_002" for item in body["recommendations"])
 
-    metrics = client.get("/metrics", headers=_auth_headers())
+    metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "recommendations_api_requests_total" in metrics.text

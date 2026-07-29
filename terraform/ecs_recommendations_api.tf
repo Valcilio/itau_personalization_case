@@ -284,15 +284,39 @@ resource "aws_apigatewayv2_integration" "recommendations" {
   payload_format_version = "1.0"
 }
 
-resource "aws_apigatewayv2_route" "recommendations_proxy" {
+resource "aws_apigatewayv2_route" "recommendations_health" {
   api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "ANY /{proxy+}"
+  route_key = "GET /health"
   target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
 }
 
-resource "aws_apigatewayv2_route" "recommendations_root" {
+resource "aws_apigatewayv2_route" "recommendations_metrics" {
   api_id    = aws_apigatewayv2_api.recommendations.id
-  route_key = "ANY /"
+  route_key = "GET /metrics"
+  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+}
+
+resource "aws_apigatewayv2_route" "recommendations_get" {
+  api_id    = aws_apigatewayv2_api.recommendations.id
+  route_key = "GET /recommendation/{user_id}"
+  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+}
+
+resource "aws_apigatewayv2_route" "recommendations_get_plural" {
+  api_id    = aws_apigatewayv2_api.recommendations.id
+  route_key = "GET /recommendations/{user_id}"
+  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+}
+
+resource "aws_apigatewayv2_route" "recommendations_filtered" {
+  api_id    = aws_apigatewayv2_api.recommendations.id
+  route_key = "POST /recommendation_filtered"
+  target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
+}
+
+resource "aws_apigatewayv2_route" "recommendations_filtered_plural" {
+  api_id    = aws_apigatewayv2_api.recommendations.id
+  route_key = "POST /recommendations_filtered"
   target    = "integrations/${aws_apigatewayv2_integration.recommendations.id}"
 }
 
@@ -307,16 +331,71 @@ resource "aws_apigatewayv2_stage" "recommendations" {
   }
 }
 
-resource "random_password" "recommendations_api_key" {
-  length  = 48
-  special = false
+resource "aws_api_gateway_api_key" "recommendations" {
+  name = "${var.project_name}-recommendations-api-key"
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+resource "aws_api_gateway_usage_plan" "recommendations" {
+  name        = "${var.project_name}-recommendations-usage-plan"
+  description = "Usage plan for the public recommendations API (API key required on protected routes)."
+
+  api_stages {
+    api_id = aws_apigatewayv2_api.recommendations.id
+    stage  = aws_apigatewayv2_stage.recommendations.name
+
+    throttle {
+      path        = "/metrics/GET"
+      burst_limit = 100
+      rate_limit  = 50
+    }
+
+    throttle {
+      path        = "/recommendation/{user_id}/GET"
+      burst_limit = 100
+      rate_limit  = 50
+    }
+
+    throttle {
+      path        = "/recommendations/{user_id}/GET"
+      burst_limit = 100
+      rate_limit  = 50
+    }
+
+    throttle {
+      path        = "/recommendation_filtered/POST"
+      burst_limit = 100
+      rate_limit  = 50
+    }
+
+    throttle {
+      path        = "/recommendations_filtered/POST"
+      burst_limit = 100
+      rate_limit  = 50
+    }
+  }
+
+  tags = {
+    Project = var.project_name
+    Service = "recommendations-api"
+  }
+}
+
+resource "aws_api_gateway_usage_plan_key" "recommendations" {
+  key_id        = aws_api_gateway_api_key.recommendations.id
+  key_type      = "API_KEY"
+  usage_plan_id = aws_api_gateway_usage_plan.recommendations.id
 }
 
 resource "aws_ssm_parameter" "recommendations_api_key" {
   name        = "/${var.project_name}/recommendations-api/api-key"
-  description = "API key required by the public recommendations API (header x-api-key)."
+  description = "API Gateway API key for the public recommendations API (header x-api-key)."
   type        = "SecureString"
-  value       = random_password.recommendations_api_key.result
+  value       = aws_api_gateway_api_key.recommendations.value
 
   tags = {
     Project = var.project_name
