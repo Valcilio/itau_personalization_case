@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
 from io import StringIO
@@ -13,6 +14,16 @@ import pandas as pd
 from boto3.dynamodb.types import TypeDeserializer
 
 from recommendations_api.domain.utils.apilogger import ApiLogger
+
+
+@dataclass(frozen=True)
+class AwsConnectorConfig:
+    """Runtime configuration for ``AwsConnector``."""
+
+    region_name: str
+    predictions_table: str
+    data_bucket: str
+    data_prefix: str
 
 
 class AwsConnector:
@@ -37,30 +48,35 @@ class AwsConnector:
             data_bucket: S3 bucket containing products.csv.
             data_prefix: S3 prefix for training/prediction source data.
         """
-        self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
-        self.predictions_table = (
-            predictions_table
-            or os.getenv("PREDICTIONS_DYNAMODB_TABLE", "").strip()
-        )
-        self.data_bucket = data_bucket or os.getenv("DATA_BUCKET", "").strip()
-        self.data_prefix = (
-            data_prefix or os.getenv("DATA_PREFIX", "training-data")
-        ).rstrip("/")
-
-        if not self.predictions_table:
+        resolved_table = (
+            predictions_table or os.getenv("PREDICTIONS_DYNAMODB_TABLE", "")
+        ).strip()
+        resolved_bucket = (data_bucket or os.getenv("DATA_BUCKET", "")).strip()
+        if not resolved_table:
             raise ValueError("PREDICTIONS_DYNAMODB_TABLE is required")
-        if not self.data_bucket:
+        if not resolved_bucket:
             raise ValueError("DATA_BUCKET is required")
 
-        self.dynamodb_client = boto3.client("dynamodb", region_name=self.region_name)
-        self.s3_client = boto3.client("s3", region_name=self.region_name)
+        self.config = AwsConnectorConfig(
+            region_name=region_name or os.getenv("AWS_REGION", "us-east-1"),
+            predictions_table=resolved_table,
+            data_bucket=resolved_bucket,
+            data_prefix=(
+                data_prefix or os.getenv("DATA_PREFIX", "training-data")
+            ).rstrip("/"),
+        )
+        self.dynamodb_client = boto3.client(
+            "dynamodb",
+            region_name=self.config.region_name,
+        )
+        self.s3_client = boto3.client("s3", region_name=self.config.region_name)
         self._deserializer = TypeDeserializer()
         self.logger = ApiLogger(self.__class__.__name__)
         self.logger.info(
             "aws_connector_initialized",
-            region=self.region_name,
-            predictions_table=self.predictions_table,
-            data_bucket=self.data_bucket,
+            region=self.config.region_name,
+            predictions_table=self.config.predictions_table,
+            data_bucket=self.config.data_bucket,
         )
 
     def _deserialize_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +102,7 @@ class AwsConnector:
         self.logger.info("dynamodb_user_query_started", user_id=user_id)
         items: list[dict[str, Any]] = []
         query_kwargs: dict[str, Any] = {
-            "TableName": self.predictions_table,
+            "TableName": self.config.predictions_table,
             "KeyConditionExpression": "user_id = :user_id",
             "ExpressionAttributeValues": {":user_id": {"S": user_id}},
         }
@@ -151,13 +167,13 @@ class AwsConnector:
     @lru_cache(maxsize=1)
     def get_products_catalog(self) -> pd.DataFrame:
         """Download and cache ``products.csv`` from S3."""
-        key = f"{self.data_prefix}/products.csv"
+        key = f"{self.config.data_prefix}/products.csv"
         self.logger.info(
             "products_catalog_download_started",
-            bucket=self.data_bucket,
+            bucket=self.config.data_bucket,
             key=key,
         )
-        obj = self.s3_client.get_object(Bucket=self.data_bucket, Key=key)
+        obj = self.s3_client.get_object(Bucket=self.config.data_bucket, Key=key)
         body = obj["Body"].read().decode("utf-8")
         products = pd.read_csv(StringIO(body))
         self.logger.info("products_catalog_download_completed", rows=len(products))

@@ -17,9 +17,14 @@ from recommendations_api.domain.utils.metrics import MetricsCollector, Timer
 ApiLogger.configure()
 logger = ApiLogger("main")
 metrics = MetricsCollector()
-_handler: RecommendationsHandler | None = None
-
 PUBLIC_PATHS = {"/health"}
+
+
+class _HandlerHolder:
+    """Mutable holder used to swap the handler in tests without globals."""
+
+    instance: RecommendationsHandler | None = None
+
 
 app = FastAPI(
     title="Recommendations API",
@@ -33,16 +38,14 @@ app = FastAPI(
 
 def get_handler() -> RecommendationsHandler:
     """Return a process-wide handler instance, creating it on first use."""
-    global _handler  # noqa: PLW0603
-    if _handler is None:
-        _handler = RecommendationsHandler()
-    return _handler
+    if _HandlerHolder.instance is None:
+        _HandlerHolder.instance = RecommendationsHandler()
+    return _HandlerHolder.instance
 
 
 def set_handler(handler: RecommendationsHandler) -> None:
     """Override the process-wide handler (used by tests)."""
-    global _handler  # noqa: PLW0603
-    _handler = handler
+    _HandlerHolder.instance = handler
 
 
 def _expected_api_key() -> str:

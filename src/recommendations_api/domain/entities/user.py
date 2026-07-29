@@ -20,7 +20,7 @@ ALLOWED_CATEGORIES = {
 
 
 @dataclass(frozen=True)
-class RecommendationFilters:
+class RecommendationFilters:  # pylint: disable=too-many-instance-attributes
     """Validated filter payload for ``POST /recommendation_filtered``."""
 
     user_id: str
