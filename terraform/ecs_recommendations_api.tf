@@ -3,13 +3,6 @@ resource "aws_security_group" "recommendations_alb" {
   description = "ALB security group for recommendations API."
   vpc_id      = data.aws_vpc.default.id
 
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.default.cidr_block]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -17,10 +10,22 @@ resource "aws_security_group" "recommendations_alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tags = {
     Project = var.project_name
     Service = "recommendations-api"
   }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "recommendations_alb_http" {
+  security_group_id = aws_security_group.recommendations_alb.id
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  cidr_ipv4         = data.aws_vpc.default.cidr_block
 }
 
 resource "aws_security_group" "recommendations_api" {
