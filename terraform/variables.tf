@@ -75,3 +75,9 @@ variable "recommendations_api_max_capacity" {
   default     = 20
 }
 
+variable "vpc_link_excluded_availability_zone_ids" {
+  description = "Availability Zone IDs excluded from API Gateway VPC Link subnets (e.g. use1-az3 in us-east-1)."
+  type        = list(string)
+  default     = ["use1-az3"]
+}
+

@@ -16,6 +16,10 @@ locals {
   model_predict_image_uri       = "${aws_ecr_repository.services["model_predict"].repository_url}:${var.image_tag}"
   recommendations_api_image_uri = "${aws_ecr_repository.services["recommendations_api"].repository_url}:${var.image_tag}"
   ecs_subnet_ids                = join(",", data.aws_subnets.default.ids)
+  vpc_link_subnet_ids = [
+    for subnet_id, subnet in data.aws_subnet.default : subnet_id
+    if !contains(var.vpc_link_excluded_availability_zone_ids, subnet.availability_zone_id)
+  ]
 
   model_train_environment = {
     DATA_BUCKET              = aws_s3_bucket.data.id

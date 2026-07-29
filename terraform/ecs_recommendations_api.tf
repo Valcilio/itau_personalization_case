@@ -256,7 +256,7 @@ resource "aws_appautoscaling_policy" "recommendations_api_memory" {
 resource "aws_apigatewayv2_vpc_link" "recommendations" {
   name               = "${var.project_name}-recommendations-vpclink"
   security_group_ids = [aws_security_group.recommendations_vpc_link.id]
-  subnet_ids         = data.aws_subnets.default.ids
+  subnet_ids         = local.vpc_link_subnet_ids
 
   tags = {
     Project = var.project_name

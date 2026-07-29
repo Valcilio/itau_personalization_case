@@ -9,6 +9,11 @@ data "aws_subnets" "default" {
   }
 }
 
+data "aws_subnet" "default" {
+  for_each = toset(data.aws_subnets.default.ids)
+  id       = each.value
+}
+
 resource "aws_security_group" "model_train" {
   name        = "${var.project_name}-model-train-ecs"
   description = "Security group for the model_train ECS task."

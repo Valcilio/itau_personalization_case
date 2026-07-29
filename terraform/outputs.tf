@@ -128,6 +128,11 @@ output "recommendations_api_gateway_endpoint" {
   value       = aws_apigatewayv2_api.recommendations.api_endpoint
 }
 
+output "recommendations_api_vpc_link_subnet_ids" {
+  description = "Subnet IDs used by the API Gateway VPC Link (unsupported AZs excluded)."
+  value       = local.vpc_link_subnet_ids
+}
+
 output "recommendations_api_log_group" {
   description = "CloudWatch log group used by the recommendations API container."
   value       = aws_cloudwatch_log_group.recommendations_api.name
