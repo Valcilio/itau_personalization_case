@@ -1,21 +1,85 @@
-"""In-process metrics collector for the recommendations API."""
+"""Prometheus metrics backed by persistent storage."""
 
 from __future__ import annotations
 
-import threading
 import time
-from dataclasses import dataclass, field
+
+from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client.core import (
+    CounterMetricFamily,
+    GaugeMetricFamily,
+    SummaryMetricFamily,
+)
+
+from recommendations_api.domain.gateways.metricsstore import (
+    InMemoryMetricsStore,
+    MetricsStore,
+    build_metrics_store,
+)
 
 
-@dataclass
+class PersistentMetricsCollector:
+    """Expose metrics from persistent storage using prometheus_client."""
+
+    def __init__(self, store: MetricsStore) -> None:
+        self.store = store
+
+    def collect(self):
+        snapshot = self.store.load_snapshot()
+
+        requests = CounterMetricFamily(
+            "recommendations_api_requests_total",
+            "Total HTTP requests handled.",
+        )
+        requests.add_metric([], snapshot.requests_total)
+        yield requests
+
+        errors = CounterMetricFamily(
+            "recommendations_api_errors_total",
+            "Total HTTP errors.",
+        )
+        errors.add_metric([], snapshot.errors_total)
+        yield errors
+
+        cold_start = CounterMetricFamily(
+            "recommendations_api_cold_start_total",
+            "Total cold-start fallbacks.",
+        )
+        cold_start.add_metric([], snapshot.cold_start_total)
+        yield cold_start
+
+        latency = SummaryMetricFamily(
+            "recommendations_api_latency_ms",
+            "Request latency in milliseconds.",
+        )
+        latency.add_metric([], snapshot.latency_count, snapshot.latency_sum)
+        latency.add_sample(
+            "recommendations_api_latency_ms",
+            {"quantile": "0.5"},
+            snapshot.latency_quantile(50),
+        )
+        latency.add_sample(
+            "recommendations_api_latency_ms",
+            {"quantile": "0.95"},
+            snapshot.latency_quantile(95),
+        )
+        yield latency
+
+        latency_avg = GaugeMetricFamily(
+            "recommendations_api_latency_avg_ms",
+            "Average request latency.",
+        )
+        latency_avg.add_metric([], snapshot.latency_avg)
+        yield latency_avg
+
+
 class MetricsCollector:
-    """Collect basic request metrics exposed by ``GET /metrics``."""
+    """Record recommendation requests and render Prometheus metrics."""
 
-    request_count: int = 0
-    error_count: int = 0
-    cold_start_count: int = 0
-    latencies_ms: list[float] = field(default_factory=list)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    def __init__(self, store: MetricsStore | None = None) -> None:
+        self.store = build_metrics_store(store)
+        self.registry = CollectorRegistry()
+        self.registry.register(PersistentMetricsCollector(self.store))
 
     def observe(
         self,
@@ -24,58 +88,16 @@ class MetricsCollector:
         is_error: bool = False,
         is_cold_start: bool = False,
     ) -> None:
-        """Record one completed request."""
-        with self._lock:
-            self.request_count += 1
-            if is_error:
-                self.error_count += 1
-            if is_cold_start:
-                self.cold_start_count += 1
-            self.latencies_ms.append(latency_ms)
-            if len(self.latencies_ms) > 5000:
-                self.latencies_ms = self.latencies_ms[-5000:]
-
-    def percentile(self, pct: float) -> float:
-        """Return a latency percentile in milliseconds."""
-        with self._lock:
-            if not self.latencies_ms:
-                return 0.0
-            ordered = sorted(self.latencies_ms)
-            index = min(len(ordered) - 1, max(0, int(round((pct / 100) * (len(ordered) - 1)))))
-            return float(ordered[index])
+        """Persist one completed recommendation request."""
+        self.store.record_request(
+            latency_ms=latency_ms,
+            is_error=is_error,
+            is_cold_start=is_cold_start,
+        )
 
     def render_prometheus(self) -> str:
         """Render metrics in Prometheus text exposition format."""
-        with self._lock:
-            request_count = self.request_count
-            error_count = self.error_count
-            cold_start_count = self.cold_start_count
-            latencies = list(self.latencies_ms)
-
-        p50 = self.percentile(50)
-        p95 = self.percentile(95)
-        avg = (sum(latencies) / len(latencies)) if latencies else 0.0
-        lines = [
-            "# HELP recommendations_api_requests_total Total HTTP requests handled.",
-            "# TYPE recommendations_api_requests_total counter",
-            f"recommendations_api_requests_total {request_count}",
-            "# HELP recommendations_api_errors_total Total HTTP errors.",
-            "# TYPE recommendations_api_errors_total counter",
-            f"recommendations_api_errors_total {error_count}",
-            "# HELP recommendations_api_cold_start_total Total cold-start fallbacks.",
-            "# TYPE recommendations_api_cold_start_total counter",
-            f"recommendations_api_cold_start_total {cold_start_count}",
-            "# HELP recommendations_api_latency_ms Request latency in milliseconds.",
-            "# TYPE recommendations_api_latency_ms summary",
-            f'recommendations_api_latency_ms{{quantile="0.5"}} {p50}',
-            f'recommendations_api_latency_ms{{quantile="0.95"}} {p95}',
-            f"recommendations_api_latency_ms_sum {sum(latencies) if latencies else 0.0}",
-            f"recommendations_api_latency_ms_count {len(latencies)}",
-            "# HELP recommendations_api_latency_avg_ms Average request latency.",
-            "# TYPE recommendations_api_latency_avg_ms gauge",
-            f"recommendations_api_latency_avg_ms {avg}",
-        ]
-        return "\n".join(lines) + "\n"
+        return generate_latest(self.registry).decode("utf-8")
 
 
 class Timer:
@@ -87,3 +109,8 @@ class Timer:
     def elapsed_ms(self) -> float:
         """Return elapsed milliseconds since construction."""
         return (time.perf_counter() - self._started) * 1000.0
+
+
+def create_metrics_collector(store: MetricsStore | None = None) -> MetricsCollector:
+    """Build a metrics collector, defaulting to in-memory storage in tests."""
+    return MetricsCollector(store=store or InMemoryMetricsStore())

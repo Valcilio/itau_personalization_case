@@ -98,6 +98,16 @@ output "predictions_dynamodb_table_arn" {
   value       = aws_dynamodb_table.predictions.arn
 }
 
+output "api_metrics_dynamodb_table_name" {
+  description = "DynamoDB table persisting recommendations API Prometheus metrics."
+  value       = aws_dynamodb_table.api_metrics.name
+}
+
+output "api_metrics_dynamodb_table_arn" {
+  description = "ARN of the DynamoDB API metrics table."
+  value       = aws_dynamodb_table.api_metrics.arn
+}
+
 output "recommendations_api_ecr_repository_url" {
   description = "ECR repository URL for the recommendations API image."
   value       = aws_ecr_repository.services["recommendations_api"].repository_url

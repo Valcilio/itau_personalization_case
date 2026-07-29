@@ -15,7 +15,8 @@ from recommendations_api.domain.usecases.recommendationsretriever import (
 from recommendations_api.domain.usecases.recommendationsstructurer import (
     RecommendationsStructurer,
 )
-from recommendations_api.main import app, set_handler
+from recommendations_api.main import app, set_handler, set_metrics_collector
+from recommendations_api.domain.utils.metrics import create_metrics_collector
 
 
 class FakeAwsConnector:
@@ -190,8 +191,13 @@ def test_retriever_ignores_other_users_rows() -> None:
     assert set(frame["user_id"]) == {"u_0231"}
 
 
-def test_get_recommendation_endpoint() -> None:
+def _reset_test_app() -> None:
     set_handler(_build_handler())
+    set_metrics_collector(create_metrics_collector())
+
+
+def test_get_recommendation_endpoint() -> None:
+    _reset_test_app()
     client = TestClient(app)
     response = client.get("/recommendation/u_0231")
     assert response.status_code == 200
@@ -203,14 +209,14 @@ def test_get_recommendation_endpoint() -> None:
 
 
 def test_get_recommendation_invalid_user() -> None:
-    set_handler(_build_handler())
+    _reset_test_app()
     client = TestClient(app)
     response = client.get("/recommendation/bad_user")
     assert response.status_code == 400
 
 
 def test_cold_start_endpoint() -> None:
-    set_handler(_build_handler())
+    _reset_test_app()
     client = TestClient(app)
     response = client.get("/recommendations/u_9999")
     assert response.status_code == 200
@@ -221,7 +227,7 @@ def test_cold_start_endpoint() -> None:
 
 
 def test_filtered_endpoint_integration() -> None:
-    set_handler(_build_handler())
+    _reset_test_app()
     client = TestClient(app)
 
     health = client.get("/health")

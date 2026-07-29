@@ -11,11 +11,21 @@ from recommendations_api.domain.gateways.recommendationshandler import (
     RecommendationsHandler,
 )
 from recommendations_api.domain.utils.apilogger import ApiLogger
-from recommendations_api.domain.utils.metrics import MetricsCollector, Timer
+from recommendations_api.domain.utils.metrics import (
+    MetricsCollector,
+    Timer,
+    create_metrics_collector,
+)
 
 ApiLogger.configure()
 logger = ApiLogger("main")
-metrics = MetricsCollector()
+metrics = create_metrics_collector()
+
+
+def set_metrics_collector(collector: MetricsCollector) -> None:
+    """Override the process-wide metrics collector (used by tests)."""
+    global metrics
+    metrics = collector
 
 
 class _HandlerHolder:
