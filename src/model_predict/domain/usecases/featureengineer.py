@@ -58,7 +58,8 @@ class FeatureEngineer:
             validated_costumers=len(costumers),
         )
 
-        scaled_matrix = self.scaler.transform(features[self.FEATURE_COLUMNS].astype(float))
+        feature_matrix = features[self.FEATURE_COLUMNS].astype(float).to_numpy()
+        scaled_matrix = self.scaler.transform(feature_matrix)
         scaled_features = pd.DataFrame(
             scaled_matrix,
             columns=self.FEATURE_COLUMNS,

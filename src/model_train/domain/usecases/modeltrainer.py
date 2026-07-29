@@ -67,7 +67,7 @@ class ModelTrainer:
             validated_customers=len(customers),
         )
 
-        feature_matrix = features[Customer.FEATURE_COLUMNS].astype(float)
+        feature_matrix = features[Customer.FEATURE_COLUMNS].astype(float).to_numpy()
         x_train, x_test, y_train, y_test = train_test_split(
             feature_matrix,
             labels,

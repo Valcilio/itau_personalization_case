@@ -17,7 +17,7 @@ def test_build_returns_scaled_features(sample_events, sample_products) -> None:
             "user_affinity_match": [1, 0, 0, 1],
         }
     )
-    scaler = StandardScaler().fit(features_raw)
+    scaler = StandardScaler().fit(features_raw.to_numpy())
     engineer = FeatureEngineer(
         events=sample_events,
         products=sample_products,

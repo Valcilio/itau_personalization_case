@@ -19,8 +19,9 @@ def test_run_adds_purchase_proba(sample_events, sample_products) -> None:
         }
     )
     labels = pd.Series([1, 0])
-    scaler = StandardScaler().fit(feature_matrix)
-    model = LogisticRegression(max_iter=1000).fit(scaler.transform(feature_matrix), labels)
+    feature_values = feature_matrix.to_numpy()
+    scaler = StandardScaler().fit(feature_values)
+    model = LogisticRegression(max_iter=1000).fit(scaler.transform(feature_values), labels)
 
     engineer = FeatureEngineer(events=sample_events, products=sample_products, scaler=scaler)
     features, scaled_features = engineer.build()

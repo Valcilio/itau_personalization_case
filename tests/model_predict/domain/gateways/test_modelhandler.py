@@ -23,8 +23,9 @@ def _write_artifact(tmp_path: Path) -> Path:
         }
     )
     labels = pd.Series([1, 0])
-    scaler = StandardScaler().fit(feature_matrix)
-    model = LogisticRegression(max_iter=1000).fit(scaler.transform(feature_matrix), labels)
+    feature_values = feature_matrix.to_numpy()
+    scaler = StandardScaler().fit(feature_values)
+    model = LogisticRegression(max_iter=1000).fit(scaler.transform(feature_values), labels)
     artifact_path = tmp_path / "model.pkl"
     with artifact_path.open("wb") as artifact_file:
         pickle.dump(
