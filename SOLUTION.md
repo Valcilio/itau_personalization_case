@@ -402,4 +402,3 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 
 - Model card: `model/model_card.json`
 - Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb`
-- Exemplo tfvars: `terraform/terraform.tfvars.example`

@@ -1,3 +1,0 @@
-# Backend configuration lives in versions.tf.
-# Run bootstrap once if the state bucket or lock table do not exist yet:
-#   cd terraform/bootstrap && terraform init && terraform apply
