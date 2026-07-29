@@ -1,0 +1,39 @@
+name: Personalization CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ci-quality:
+    name: CI - Pylint and Pytest
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pylint_and_pytest.yaml
+
+  ci-tag-release:
+    name: CI - Tag Release
+    needs: ci-quality
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/cicd_general.yaml
+
+  cd-docker-and-terraform:
+    name: CD - model-train, model-predict and recommendations-api Deploy
+    needs: ci-tag-release
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/terraform_docker.yaml
+    with:
+      image_tag: ${{ needs.ci-tag-release.outputs.image_tag }}
+      push_latest: ${{ github.ref == 'refs/heads/main' }}
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}

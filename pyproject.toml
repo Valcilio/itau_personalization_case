@@ -1,0 +1,35 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "-m",
+    "not integration",
+]
+markers = [
+    "integration: live AWS integration tests (run with: pytest tests/integration -m integration)",
+    "order: enforce execution order for integration pipeline tests",
+]
+
+[tool.pylint.main]
+py-version = "3.12"
+jobs = 0
+recursive = true
+ignore-paths = ["notebooks", "tests"]
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-locals",
+    "import-error",
+    "no-member",
+    "duplicate-code",
+]
+
+[tool.pylint.format]
+max-line-length = 100

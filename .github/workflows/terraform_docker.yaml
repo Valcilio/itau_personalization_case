@@ -1,0 +1,287 @@
+name: CD Push and Terraform
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+      push_latest:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-terraform:
+    name: Apply Terraform
+    runs-on: ubuntu-latest
+    outputs:
+      rollback_image_tag: ${{ steps.previous-tag.outputs.image_tag }}
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Capture rollback image tag
+        id: previous-tag
+        run: |
+          if IMAGE_URI="$(terraform output -raw model_train_image_uri 2>/dev/null)"; then
+            ROLLBACK_TAG="${IMAGE_URI##*:}"
+          else
+            ROLLBACK_TAG="UAT"
+          fi
+          echo "image_tag=${ROLLBACK_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Backup Terraform state before apply
+        run: terraform state pull > "${GITHUB_WORKSPACE}/terraform-state.backup"
+
+      - name: Upload pre-apply state backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-state-backup
+          path: terraform-state.backup
+          retention-days: 1
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}"
+
+  push-model-train-image:
+    name: Push model-train Image to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+      - integration-tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-model-train:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-model-train:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push model-train
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/model_train/Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          build-args: |
+            IMAGE_TAG=${{ inputs.image_tag }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=model-train
+          cache-to: type=gha,mode=max,scope=model-train
+
+  push-model-predict-image:
+    name: Push model-predict Image to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+      - integration-tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-model-predict:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-model-predict:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push model-predict
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/model_predict/Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=model-predict
+          cache-to: type=gha,mode=max,scope=model-predict
+
+  push-recommendations-api-image:
+    name: Push recommendations-api Image to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+      - integration-tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-recommendations-api:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-recommendations-api:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push recommendations-api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/recommendations_api/Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=recommendations-api
+          cache-to: type=gha,mode=max,scope=recommendations-api
+
+  integration-tests:
+    name: AWS Integration Tests
+    needs:
+      - deploy-terraform
+    uses: ./.github/workflows/integration_tests.yaml
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  rollback-terraform:
+    name: Rollback Terraform After Failed Integration Tests
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+      - integration-tests
+    if: ${{ failure() && needs.deploy-terraform.result == 'success' && needs.integration-tests.result == 'failure' }}
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Download pre-apply state backup
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-state-backup
+          path: state-backup
+
+      - name: Restore Terraform state
+        run: terraform state push -force "${GITHUB_WORKSPACE}/state-backup/terraform-state.backup"
+
+      - name: Reconcile AWS with restored state
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var="image_tag=${{ needs.deploy-terraform.outputs.rollback_image_tag }}" \
+            -var="aws_region=${{ secrets.AWS_REGION }}"

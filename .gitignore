@@ -1,1 +1,15 @@
+*__pycache__/
 .venv/
+.vscode/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform.tfstate.lock.info
+terraform/terraform.tfvars
+terraform/backend.hcl
+terraform/bootstrap/.terraform/
+terraform/bootstrap/*.tfstate
+terraform/bootstrap/*.tfstate.*
+terraform/bootstrap/.terraform.tfstate.lock.info
+test.ipynb
+notebooks/model_artifact/

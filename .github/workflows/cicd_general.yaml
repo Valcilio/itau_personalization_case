@@ -1,0 +1,48 @@
+name: CI Tag Release
+
+on:
+  workflow_call:
+    outputs:
+      image_tag:
+        description: Docker image tag generated for this pipeline run
+        value: ${{ jobs.tag-release.outputs.image_tag }}
+
+permissions:
+  contents: write
+
+jobs:
+  tag-release:
+    name: Resolve Image Tag and Git Release
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.release-tag.outputs.image_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve image tag
+        id: release-tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            IMAGE_TAG="v0.1.${{ github.run_number }}"
+          else
+            IMAGE_TAG="UAT"
+          fi
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
+
+      - name: Create and push git tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse "${IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${IMAGE_TAG} already exists. Skipping tag creation."
+            exit 0
+          fi
+
+          git tag "${IMAGE_TAG}"
+          git push origin "${IMAGE_TAG}"
