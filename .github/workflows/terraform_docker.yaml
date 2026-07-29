@@ -46,17 +46,20 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Terraform Init
         run: terraform init -input=false
 
       - name: Capture rollback image tag
         id: previous-tag
+        env:
+          TF_IN_AUTOMATION: "1"
         run: |
-          if IMAGE_URI="$(terraform output -raw model_train_image_uri 2>/dev/null)"; then
+          ROLLBACK_TAG="UAT"
+          IMAGE_URI="$(terraform output -raw -no-color model_train_image_uri 2>/dev/null | tr -d '\n\r' || true)"
+          if [[ -n "${IMAGE_URI}" && "${IMAGE_URI}" == *:* && "${IMAGE_URI}" != *"│"* ]]; then
             ROLLBACK_TAG="${IMAGE_URI##*:}"
-          else
-            ROLLBACK_TAG="UAT"
           fi
           echo "image_tag=${ROLLBACK_TAG}" >> "${GITHUB_OUTPUT}"
 
@@ -267,6 +270,7 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Terraform Init
         run: terraform init -input=false
