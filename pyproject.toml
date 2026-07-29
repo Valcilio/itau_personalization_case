@@ -1,7 +1,15 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-v --tb=short"
+addopts = [
+    "-v",
+    "--tb=short",
+    "-m",
+    "not integration",
+]
+markers = [
+    "integration: live AWS integration tests (run with: pytest -m integration)",
+]
 
 [tool.pylint.main]
 py-version = "3.12"
