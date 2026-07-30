@@ -31,7 +31,7 @@ O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 | **Model Versioning** | SageMaker Model Registry + S3 (`models/`) | Versiona e aprova model packages; v1 = artefato original do case; demais versões = retreinos |
 | **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
 | **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB; disparado via `null_resource` após train na CI |
-| **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3 |
+| **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS Fargate `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3. **Sem Lambda** — todo compute é ECS Fargate |
 | **Monitoring** | CloudWatch Logs + `/metrics` (in-memory) | Logs de infraestrutura e aplicação; métricas Prometheus expostas pelo container |
 
 Rotas expostas via API Gateway (autenticação por `x-api-key`, exceto `/health`):
@@ -64,7 +64,7 @@ push → CI (pylint + unit tests)
 - Python **≥ 3.12**
 - Docker (opcional, recomendado para paridade com produção)
 - AWS CLI + credenciais (apenas para deploy e testes de integração)
-- Terraform **≥ 1.9** (deploy de infra)
+- Terraform **≥ 1.5.0** (deploy de infra; CI usa **1.9.8**)
 
 ### Instalação local
 
@@ -78,7 +78,7 @@ pip install -r requirements-dev.txt
 ### Testes unitários (padrão, sem AWS)
 
 ```bash
-pytest                    # 118 testes, ~1s
+pytest                    # 128 testes, ~2s
 pylint src                # lint do código de produção
 ```
 
@@ -98,7 +98,9 @@ pytest tests/integration tests/api_tests -m integration -s
 ```
 
 Ordem enforced: `model_train` → `model_predict` → `recommendations_api` → smoke/metrics via API Gateway.  
-Os testes in-process da API usam a tabela DynamoDB de integração; os testes em `tests/api_tests` chamam o **API Gateway público** e exigem predições na **tabela de produção**.
+Os testes in-process da API usam a tabela DynamoDB de integração; os testes em `tests/api_tests` chamam o **API Gateway público** e exigem predições na **tabela de produção** (`personalization-predictions`).
+
+> **Primeiro deploy:** na CI, os `api_tests` rodam **antes** do `model_predict` de produção. A tabela de produção precisa já estar populada (deploy anterior ou execução manual de `model_predict`). Nos deploys seguintes, o `model_predict` disparado no CD anterior mantém a tabela pronta.
 
 Os testes de integração **não alteram recursos de produção**:
 - `model_train` registra versões em `integration_model_package_group_name` (não no Model Group de produção).
@@ -115,7 +117,7 @@ export AWS_REGION=us-east-1
 export DATA_BUCKET=<terraform output data_bucket_name>
 export PREDICTIONS_DYNAMODB_TABLE=<terraform output predictions_dynamodb_table_name>
 
-PYTHONPATH=src uvicorn recommendations_api.main:app --host 0.0.0.0 --port 8080
+PYTHONPATH=src uvicorn recommendations_api.main:app --host 0.0.0.0 --port 8000
 ```
 
 Endpoints locais:
@@ -193,34 +195,41 @@ A esteira está em `.github/workflows/` e é orquestrada por `workflow.yaml` (**
 
 ### Gatilhos
 
-| Evento | CI (lint + testes) | CD (deploy AWS) |
-|--------|-------------------|-----------------|
-| `pull_request` | ✅ | ❌ |
-| `push` (qualquer branch) | ✅ | ✅ |
-| `workflow_dispatch` | ✅ | ✅ (se não for PR) |
+| Evento | CI (lint + testes) | Aprovação manual | CD (deploy AWS) |
+|--------|-------------------|------------------|-----------------|
+| `pull_request` | ✅ | ❌ | ❌ |
+| `push` (qualquer branch) | ✅ | ✅ (environment `cd-approval`) | ✅ após aprovar |
+| `workflow_dispatch` | ✅ | ✅ | ✅ após aprovar |
 
 ### Visão geral dos workflows
 
 | Arquivo | Papel |
 |---------|--------|
-| `workflow.yaml` | Orquestrador principal — encadeia CI → tag → CD |
+| `workflow.yaml` | Orquestrador principal — encadeia CI → tag → aprovação → CD |
 | `pylint_and_pytest.yaml` | `pylint src` + `pytest -m "not integration"` |
 | `cicd_general.yaml` | Resolve `image_tag` e cria git tag em `main` |
 | `terraform_docker.yaml` | Terraform apply, push ECR, integração, train, predict, rollback |
 | `integration_tests.yaml` | `pytest tests/integration tests/api_tests -m integration` (timeout 90 min) |
+| `bootstrap_environments.yaml` | Cria/atualiza o environment `cd-approval` (manual via `workflow_dispatch`) |
+
+Configuração do environment: `.github/environments/cd-approval.json` + script `.github/scripts/ensure_github_environment.sh`.
 
 ### Fluxo completo (push)
 
 ```
 workflow.yaml
   │
-  ├─ 1. ci-quality ────────────── pylint + pytest unitário (~118 testes)
+  ├─ 1. ci-quality ────────────── pylint + pytest unitário (~128 testes)
   │
   ├─ 2. ci-tag-release ────────── só se push (não PR)
   │       • main  → image_tag = v0.1.{run_number} + git tag
   │       • outras branches → image_tag = UAT
   │
-  └─ 3. cd-docker-and-terraform ─ só se push (não PR)
+  ├─ 3. ensure-cd-environment ──── cria/atualiza environment `cd-approval` via GitHub API
+  │
+  ├─ 4. cd-approval ───────────── pausa até aprovação manual no environment `cd-approval`
+  │
+  └─ 5. cd-docker-and-terraform ─ só após aprovação
           │
           ├─ deploy-terraform
           │     • backup do state (artifact para rollback)
@@ -235,7 +244,7 @@ workflow.yaml
           ├─ integration-tests ────────── pipelines isolados + API Gateway
           │     • order 1–3: model_train → model_predict → API in-process
           │     • order 4–5: smoke e metrics via API Gateway público
-          │     (usa recursos de integração isolados + tabela DynamoDB de produção)
+          │     (recursos de integração isolados; api_tests leem tabela DynamoDB de **produção**)
           │
           ├─ trigger-model-train ──────── só se integração passou
           │     • terraform apply -target=null_resource.run_model_train_on_apply
@@ -252,6 +261,14 @@ workflow.yaml
 ```
 
 ### Decisões importantes da pipeline
+
+**Aprovação manual antes do CD.** Após o CI passar (`ci-quality` + `ci-tag-release`), o job `ensure-cd-environment` garante que o GitHub Environment **`cd-approval`** existe (config em `.github/environments/cd-approval.json`, script `.github/scripts/ensure_github_environment.sh`). Em seguida, `cd-approval` aguarda um revisor aprovar o deploy na UI do Actions (*Review deployments*). Sem aprovação, Terraform/ECR/integração/batch **não** rodam.
+
+Configuração no repositório GitHub:
+
+1. **Settings → Variables → Actions** → crie `CD_APPROVER_GITHUB_USERNAMES` com logins GitHub separados por vírgula (ex.: `alice,bob`). O pipeline registra esses usuários como *required reviewers* do environment.
+2. (Opcional) Rode manualmente **Bootstrap GitHub Environments** (`bootstrap_environments.yaml`) uma vez para provisionar o environment antes do primeiro push com CD.
+3. Para alterar políticas (branches, `wait_timer`, etc.), edite `.github/environments/cd-approval.json` e dispare o bootstrap ou um novo push.
 
 **Terraform antes das imagens.** O `apply` inicial cria/atualiza ECR, ECS, IAM, etc. As imagens Docker referenciam repositórios que já existem. O `image_tag` da pipeline é passado como variável Terraform e compõe as URIs das task definitions (`local.*_image_uri`).
 
@@ -484,20 +501,24 @@ Retorna até **10 produtos** ranqueados por `recommendation_score` (probabilidad
   "count": 10,
   "cold_start_flag": false,
   "recommendations": [
-    {"product_id": "p_0042", "score": 0.67, "rank": 1}
+    {"product_id": "p_0042", "score": 0.67}
   ]
 }
 ```
+
+**Validação:** `user_id` deve seguir o padrão `u_XXXX` (regex `^u_\d{4}$`); IDs inválidos retornam HTTP 400.
 
 ### `POST /recommendations_filtered`
 
 Body JSON com filtros opcionais: `limit`, `exclude_product_ids`, `category`, `categories`, `exclude_categories`, `min_price`, `max_price`, `min_avg_rating`, `min_popularity_score`, `min_recommendation_score`, `only_affinity_match`, `exclude_cold_start`.
 
-Resposta inclui metadados enriquecidos (`category`, `price`, etc.) além do score.
+Categorias aceitas: `beleza`, `casa`, `eletronicos`, `esporte`, `livros`, `moda`. Product IDs seguem `p_XXX` (`^p_\d{3}$`).
+
+Resposta inclui metadados enriquecidos (`category`, `price`, `interactions`, `user_affinity_match`, etc.) além do score. Quando a linha no DynamoDB não traz `category`, a API enriquece via join com `products.csv` (S3).
 
 ### Autenticação
 
-Na AWS, API Gateway exige header `x-api-key` em todas as rotas exceto `/health`.
+Na AWS, API Gateway exige header `x-api-key` em todas as rotas exceto `/health`. A validação ocorre **somente no gateway** — o FastAPI não consome nem verifica `RECOMMENDATIONS_API_KEY`; a chave fica no SSM (`/personalization/recommendations-api/api-key`) e é exposta via output Terraform.
 
 ---
 
@@ -661,8 +682,13 @@ Em escala Itaú, se a inferência passasse a ocorrer em tempo de request, faria 
 
 ### Unitários (`tests/`, espelha `src/`)
 
-- **118 testes** cobrindo feature engineering, handlers, filtros, cold start, métricas, gateways e seed do modelo baseline (mocks boto3/sklearn).
-- Execução rápida (~1s), roda em todo PR.
+- **128 testes** cobrindo feature engineering, handlers, filtros, cold start, métricas, gateways, seed do modelo baseline e helpers de API Gateway (mocks boto3/sklearn).
+- Execução rápida (~2s), roda em todo PR.
+- Helpers reutilizáveis em `tests/helpers/`:
+  - `aws_integration.py` — leitura de outputs Terraform, builders de env, checks S3/DynamoDB
+  - `api_gateway.py` — cliente HTTP, parsing Prometheus/Datadog, resolução de API key via SSM
+  - `recommendations_fixtures.py` — `FakeAwsConnector` e dados de exemplo para unitários
+  - `test_api_gateway.py` — testes unitários dos helpers acima
 
 ### Integração (`tests/integration/` + `tests/api_tests/`)
 
@@ -676,9 +702,9 @@ Pipeline **sem mocks**, contra AWS real:
 | 4 | `api_tests/test_smoke.py` | Smoke tests HTTP via API Gateway (`/health`, recomendações, filtros, auth) |
 | 5 | `api_tests/test_metrics.py` | `/metrics` Prometheus + Datadog (`?format=datadog`) |
 
-Testes de **carga** ficam em `notebooks/api_load_test.ipynb` — duas sessões comparáveis (usuários de `events.csv` vs cold start), 4×5 requisições cada, coleta Prometheus ao final. Execução manual, fora da pipeline CI.
+Testes de **carga** ficam em `notebooks/api_load_test.ipynb` — duas sessões comparáveis (usuários de `events.csv` vs cold start), 4×5 requisições concorrentes cada, compara latências client-side e coleta `/metrics` Prometheus ao final. Execução manual, fora da pipeline CI.
 
-Os testes em `tests/api_tests` replicam as validações automatizadas de `notebooks/testing_endpoint.ipynb`. Falha em qualquer etapa bloqueia os batch jobs de produção e aciona rollback do state Terraform na pipeline CD.
+Os testes em `tests/api_tests` replicam as validações automatizadas de `notebooks/testing_endpoint.ipynb` (smoke, filtros, auth, métricas Prometheus e Datadog). Falha em qualquer etapa bloqueia os batch jobs de produção e aciona rollback do state Terraform na pipeline CD.
 
 O teste in-process da API exercita HTTP de ponta a ponta (`TestClient` → FastAPI → handler → AWS), sem mockar camadas internas — atende ao requisito do README de integração com fluxo real.
 
@@ -786,25 +812,42 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 
 ---
 
+## Notebooks
+
+Exploração e validação manual — **fora da pipeline CI**:
+
+| Notebook | Propósito |
+|----------|-----------|
+| `notebooks/testing_endpoint.ipynb` | Testes manuais via API Gateway; resolve URL/chave via Terraform/SSM; precursor de `tests/api_tests/` |
+| `notebooks/api_load_test.ipynb` | Teste de carga: 2 sessões (known vs cold start), 4 rounds × 5 req concorrentes, compara latências + `/metrics` |
+| `notebooks/features_explorations.ipynb` | EDA sobre `events.csv` e `products.csv` |
+| `notebooks/generating_input_dataset.ipynb` | Validação da geração do dataset de features vs expectativas do modelo |
+| `notebooks/model_understanding.ipynb` | Inspeção do `model.pkl` bundled (coeficientes, scaler, feature cols) |
+| `notebooks/register_actual_model.ipynb` | **Legado** — registro manual no SageMaker; substituído pelo seed automático em `model_train` |
+
+O diagrama de arquitetura AWS está no topo deste documento (Imgur); não há arquivo local em `docs/`.
+
+---
+
 ## Estrutura do repositório
 
 ```
 src/
-├── model_train/           # treino + registro SageMaker
-├── model_predict/         # batch scoring → S3 + DynamoDB
-└── recommendations_api/ # FastAPI serving
-docs/
-└── architecture.jpeg      # diagrama de arquitetura AWS
-tests/                     # unitários (espelham src/)
-tests/integration/         # pipelines AWS isolados (3 testes)
-tests/api_tests/           # smoke + metrics via API Gateway
-notebooks/api_load_test.ipynb  # carga manual (4×5 req + /metrics)
-terraform/                 # ECS, S3, DynamoDB, API Gateway, IAM, ECR, SageMaker
-terraform/bootstrap/       # state S3 + DynamoDB lock (setup one-time)
-docker/                    # Dockerfiles das 3 apps
-.github/workflows/         # CI (unit) + CD (terraform → push → integração → train → predict)
-data/                      # CSVs de referência local
-model/                     # model.pkl + model_card.json originais do case
+├── model_train/             # treino + registro SageMaker
+├── model_predict/           # batch scoring → S3 + DynamoDB
+└── recommendations_api/     # FastAPI serving (porta 8000)
+tests/                       # unitários (espelham src/)
+tests/helpers/               # fixtures e helpers compartilhados (AWS + API Gateway)
+tests/integration/           # pipelines AWS isolados (3 testes ordenados)
+tests/api_tests/             # smoke + metrics via API Gateway público
+notebooks/                   # exploração, carga e testes manuais (6 notebooks)
+terraform/                   # ECS Fargate, S3, DynamoDB, API Gateway, IAM, ECR, SageMaker
+terraform/bootstrap/         # state S3 + DynamoDB lock (setup one-time)
+docker/                      # Dockerfiles das 3 apps
+.github/workflows/           # CI (unit) + CD (terraform → push → integração → train → predict)
+data/                        # CSVs de referência local (~500 usuários, 60 produtos)
+model/                       # model.pkl, model.tar.gz e model_card.json originais do case
+PLAN.md                      # planejamento interno de arquitetura (pré-implementação)
 ```
 
 ---
@@ -820,6 +863,11 @@ model/                     # model.pkl + model_card.json originais do case
 | `BASELINE_MODEL_DIR` | train | Diretório com `model.pkl` do case (default `/app/model` no container) |
 | `BASELINE_MODEL_PREFIX` | train | Prefixo S3 do artefato baseline seed (default `models/purchase_propensity/case-baseline-v1`) |
 | `AWS_REGION` | todos | Região AWS (default `us-east-1`) |
+| `RECOMMENDATIONS_API_BASE_URL` | notebooks / api_tests | URL do API Gateway (opcional; fallback via `terraform output`) |
+| `RECOMMENDATIONS_API_KEY` | notebooks / api_tests | API key para testes manuais (fallback via Terraform/SSM) |
+| `LOAD_TEST_BATCH_SIZE` / `LOAD_TEST_ROUNDS` | notebook carga | Tamanho do batch e rounds por sessão (defaults 5 e 4) |
+| `RECOMMENDATIONS_TEST_USER_ID` | api_tests | Usuário conhecido (default `u_0231`) |
+| `RECOMMENDATIONS_TEST_COLD_START_USER_ID` | api_tests | Usuário cold start (default `u_9999`) |
 
 Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform (`terraform output`).
 
@@ -828,7 +876,8 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 ## Limitações conhecidas
 
 - Predições desatualizadas entre execuções de `model_predict`.
-- Replace DynamoDB O(n) — lento para catálogos grandes.
+- Replace DynamoDB O(n) — upsert do snapshot novo seguido de delete de chaves obsoletas; lento para catálogos grandes (~30k linhas levam vários minutos).
+- Primeiro deploy na CI: `api_tests` exigem tabela de produção já populada (ver [Testes de integração](#testes-de-integração-aws-real)).
 - Model package version hardcoded em `model_predict` (v1 — baseline do case; retreinos ficam no Registry mas não são servidos).
 - Rollback do CI reverte **infra Terraform**, não dados escritos nos testes de integração.
 - `scikit-learn` pinado em 1.8.x para compatibilidade com artefato existente no S3.
@@ -838,5 +887,7 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 ## Referências rápidas
 
 - Model card: `model/model_card.json`
+- Planejamento de arquitetura: `PLAN.md`
 - Notebook de registro manual (legado): `notebooks/register_actual_model.ipynb` — substituído pelo seed automático em `model_train`
-- Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb`
+- Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb` → portado para `tests/api_tests/`
+- Notebook de carga: `notebooks/api_load_test.ipynb`

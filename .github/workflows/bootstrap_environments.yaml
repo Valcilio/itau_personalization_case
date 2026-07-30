@@ -1,0 +1,22 @@
+name: Bootstrap GitHub Environments
+
+on:
+  workflow_dispatch:
+
+permissions:
+  administration: write
+  contents: read
+
+jobs:
+  ensure-cd-approval-environment:
+    name: Ensure cd-approval Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create or update cd-approval environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_APPROVER_GITHUB_USERNAMES: ${{ vars.CD_APPROVER_GITHUB_USERNAMES }}
+        run: bash .github/scripts/ensure_github_environment.sh .github/environments/cd-approval.json
