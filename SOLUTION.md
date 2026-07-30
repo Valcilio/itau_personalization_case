@@ -20,7 +20,7 @@ A solução separa **treino**, **predição em batch**, **monitoramento de drift
 ### Arquitetura na AWS
 
 <p align="center">
-  <img src="https://i.imgur.com/GnOrbl6.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
+  <img src="https://i.imgur.com/0tskCs9.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
 </p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
