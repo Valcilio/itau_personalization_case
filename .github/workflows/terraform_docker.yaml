@@ -67,7 +67,7 @@ jobs:
         run: terraform state pull > "${GITHUB_WORKSPACE}/terraform-state.backup"
 
       - name: Upload pre-apply state backup
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: terraform-state-backup
           path: terraform-state.backup
@@ -364,7 +364,7 @@ jobs:
         run: terraform init -input=false
 
       - name: Download pre-apply state backup
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: terraform-state-backup
           path: state-backup
