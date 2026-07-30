@@ -94,11 +94,11 @@ terraform init
 terraform apply -var="image_tag=UAT" -var="aws_region=us-east-1"
 
 cd ..
-pytest tests/integration -m integration -s
+pytest tests/integration tests/api_tests -m integration -s
 ```
 
-Ordem enforced: `model_train` → `model_predict` → `recommendations_api`.  
-O teste da API exige predições no DynamoDB (geradas pelo `model_predict`).
+Ordem enforced: `model_train` → `model_predict` → `recommendations_api` → smoke/metrics via API Gateway.  
+Os testes in-process da API usam a tabela DynamoDB de integração; os testes em `tests/api_tests` chamam o **API Gateway público** e exigem predições na **tabela de produção**.
 
 Os testes de integração **não alteram recursos de produção**:
 - `model_train` registra versões em `integration_model_package_group_name` (não no Model Group de produção).
@@ -207,7 +207,7 @@ A esteira está em `.github/workflows/` e é orquestrada por `workflow.yaml` (**
 | `pylint_and_pytest.yaml` | `pylint src` + `pytest -m "not integration"` |
 | `cicd_general.yaml` | Resolve `image_tag` e cria git tag em `main` |
 | `terraform_docker.yaml` | Terraform apply, push ECR, integração, train, predict, rollback |
-| `integration_tests.yaml` | `pytest tests/integration -m integration` (timeout 90 min) |
+| `integration_tests.yaml` | `pytest tests/integration tests/api_tests -m integration` (timeout 90 min) |
 
 ### Fluxo completo (push)
 
@@ -232,8 +232,10 @@ workflow.yaml
           ├─ push-model-predict-image    ─┼─ paralelo (após terraform)
           └─ push-recommendations-api-image ─┘
           │
-          ├─ integration-tests ────────── model_train → model_predict → API
-          │     (usa recursos de integração isolados — ver Terraform)
+          ├─ integration-tests ────────── pipelines isolados + API Gateway
+          │     • order 1–3: model_train → model_predict → API in-process
+          │     • order 4–5: smoke e metrics via API Gateway público
+          │     (usa recursos de integração isolados + tabela DynamoDB de produção)
           │
           ├─ trigger-model-train ──────── só se integração passou
           │     • terraform apply -target=null_resource.run_model_train_on_apply
@@ -253,7 +255,7 @@ workflow.yaml
 
 **Terraform antes das imagens.** O `apply` inicial cria/atualiza ECR, ECS, IAM, etc. As imagens Docker referenciam repositórios que já existem. O `image_tag` da pipeline é passado como variável Terraform e compõe as URIs das task definitions (`local.*_image_uri`).
 
-**Batch jobs só após integração.** `model_train` e `model_predict` em produção só disparam se os testes de integração passarem. O treino roda primeiro; aguarda-se **10 segundos** (`sleep 10`) antes do predict, dando margem para o ECS RunTask de treino ser aceito pela API (o job não espera o treino terminar — apenas evita disparo simultâneo). Se a integração falha, nenhum batch roda e o state Terraform é revertido.
+**Batch jobs só após integração.** `model_train` e `model_predict` em produção só disparam se os testes de integração **e** os testes de API (`tests/api_tests`) passarem. Falha em qualquer um deles aciona o rollback do state Terraform. O treino roda primeiro; aguarda-se **10 segundos** (`sleep 10`) antes do predict, dando margem para o ECS RunTask de treino ser aceito pela API (o job não espera o treino terminar — apenas evita disparo simultâneo).
 
 **Rollback limitado.** O rollback restaura o **state Terraform** e reconcilia a infra com a tag de imagem anterior. Dados já escritos (S3, DynamoDB, Registry) durante testes de integração **não** são revertidos automaticamente.
 
@@ -641,7 +643,7 @@ Contadores e latências ficam in-memory e alimentam `/metrics` via `prometheus_c
 
 ### 6. CI/CD com gate de integração
 
-Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR; `model_train` e `model_predict` em produção só disparam se a integração passar (train → sleep 10s → predict). Falha na integração → rollback do state Terraform. Ver [Pipeline CI/CD](#pipeline-cicd-github-actions) e [Infraestrutura Terraform](#infraestrutura-terraform).
+Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR; `model_train` e `model_predict` em produção só disparam se integração **e** API tests passarem (train → sleep 10s → predict). Falha em qualquer teste → rollback do state Terraform. Ver [Pipeline CI/CD](#pipeline-cicd-github-actions) e [Infraestrutura Terraform](#infraestrutura-terraform).
 
 ### 7. API síncrona (e caminho assíncrono futuro)
 
@@ -662,17 +664,23 @@ Em escala Itaú, se a inferência passasse a ocorrer em tempo de request, faria 
 - **118 testes** cobrindo feature engineering, handlers, filtros, cold start, métricas, gateways e seed do modelo baseline (mocks boto3/sklearn).
 - Execução rápida (~1s), roda em todo PR.
 
-### Integração (`tests/integration/`)
+### Integração (`tests/integration/` + `tests/api_tests/`)
 
-Três testes **sem mocks**, contra AWS real:
+Pipeline **sem mocks**, contra AWS real:
 
-| Ordem | Teste | Valida |
+| Ordem | Suite | Valida |
 |-------|-------|--------|
 | 1 | `model_train` | Pipeline de treino → seed baseline (se Registry vazio) → S3 + SageMaker Registry (grupo de integração) |
 | 2 | `model_predict` | Pipeline completo → S3 + DynamoDB (tabela de integração) |
 | 3 | `recommendations_api` | `TestClient` + conectores reais (tabela DynamoDB de integração, S3, métricas) |
+| 4 | `api_tests/test_smoke.py` | Smoke tests HTTP via API Gateway (`/health`, recomendações, filtros, auth) |
+| 5 | `api_tests/test_metrics.py` | `/metrics` Prometheus + Datadog (`?format=datadog`) |
 
-O teste da API exercita HTTP de ponta a ponta (`TestClient` → FastAPI → handler → AWS), sem mockar camadas internas — atende ao requisito do README de integração com fluxo real.
+Testes de **carga** ficam em `notebooks/api_load_test.ipynb` — duas sessões comparáveis (usuários de `events.csv` vs cold start), 4×5 requisições cada, coleta Prometheus ao final. Execução manual, fora da pipeline CI.
+
+Os testes em `tests/api_tests` replicam as validações automatizadas de `notebooks/testing_endpoint.ipynb`. Falha em qualquer etapa bloqueia os batch jobs de produção e aciona rollback do state Terraform na pipeline CD.
+
+O teste in-process da API exercita HTTP de ponta a ponta (`TestClient` → FastAPI → handler → AWS), sem mockar camadas internas — atende ao requisito do README de integração com fluxo real.
 
 ---
 
@@ -788,7 +796,9 @@ src/
 docs/
 └── architecture.jpeg      # diagrama de arquitetura AWS
 tests/                     # unitários (espelham src/)
-tests/integration/         # AWS real (3 testes)
+tests/integration/         # pipelines AWS isolados (3 testes)
+tests/api_tests/           # smoke + metrics via API Gateway
+notebooks/api_load_test.ipynb  # carga manual (4×5 req + /metrics)
 terraform/                 # ECS, S3, DynamoDB, API Gateway, IAM, ECR, SageMaker
 terraform/bootstrap/       # state S3 + DynamoDB lock (setup one-time)
 docker/                    # Dockerfiles das 3 apps

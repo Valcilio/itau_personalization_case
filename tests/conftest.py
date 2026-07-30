@@ -5,9 +5,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-# Integration tests call live AWS and can take several minutes.
-# Run them explicitly with: pytest tests/integration -m integration
-collect_ignore = ["integration"]
+# Integration and API tests call live AWS and can take several minutes.
+# Run them explicitly with:
+#   pytest tests/integration tests/api_tests -m integration
+collect_ignore = ["integration", "api_tests"]
 
 
 @pytest.fixture
