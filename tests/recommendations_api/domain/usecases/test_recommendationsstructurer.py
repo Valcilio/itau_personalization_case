@@ -50,7 +50,7 @@ def test_structure_filtered_returns_detailed_payload() -> None:
         "u_0231",
         frame,
         False,
-        context={"device": "mobile"},
+        category="livros",
     )
-    assert payload["context"]["device"] == "mobile"
+    assert payload["category"] == "livros"
     assert payload["recommendations"][0]["recommendation_score"] == 0.95

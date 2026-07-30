@@ -236,6 +236,22 @@ class AwsConnector:
         )
         return model_package_arn
 
+    def has_model_packages(self, model_package_group_name: str) -> bool:
+        """Return True when the model package group already has at least one version."""
+        response = self.sagemaker_client.list_model_packages(
+            ModelPackageGroupName=model_package_group_name,
+            SortBy="CreationTime",
+            SortOrder="Ascending",
+            MaxResults=1,
+        )
+        has_packages = bool(response.get("ModelPackageSummaryList"))
+        self.logger.info(
+            "model_package_group_versions_checked",
+            model_package_group_name=model_package_group_name,
+            has_packages=has_packages,
+        )
+        return has_packages
+
     def _ensure_model_package_group(self, model_package_group_name: str) -> None:
         """Create the model package group when it does not exist yet."""
         try:

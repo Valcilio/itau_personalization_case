@@ -71,7 +71,7 @@ class RecommendationsHandler:
         self.logger.info(
             "filtered_recommendation_started",
             user_id=filters.user_id,
-            context=filters.context,
+            category=filters.category,
         )
 
         predictions = self.aws_connector.get_user_predictions(filters.user_id)
@@ -94,5 +94,5 @@ class RecommendationsHandler:
             user_id=filters.user_id,
             recommendations=filtered,
             is_cold_start=is_cold_start,
-            context=filters.context,
+            category=filters.category,
         )

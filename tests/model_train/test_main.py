@@ -13,7 +13,9 @@ from model_train.main import (
     main,
     publish_model_artifact,
     register_model_version,
+    resolve_baseline_model_dir,
     run_training_pipeline,
+    seed_baseline_model_if_needed,
 )
 
 
@@ -93,6 +95,7 @@ def test_main_returns_zero(mock_run, _mock_configure) -> None:
         model_output_dir="/tmp",
         model_s3_uri="s3://x",
         model_package_arn="arn",
+        baseline_model_package_arn=None,
         accuracy="0.9",
         roc_auc="0.8",
         validated_customers=1,
@@ -102,6 +105,7 @@ def test_main_returns_zero(mock_run, _mock_configure) -> None:
 
 @patch("model_train.main.register_model_version", return_value="arn")
 @patch("model_train.main.publish_model_artifact", return_value="s3://model")
+@patch("model_train.main.seed_baseline_model_if_needed", return_value=None)
 @patch("model_train.main.load_datasets")
 @patch("model_train.main.load_config")
 @patch("model_train.main.AwsConnector")
@@ -111,6 +115,7 @@ def test_run_training_pipeline(
     _mock_connector_cls,
     mock_load_config,
     mock_load_datasets,
+    mock_seed,
     _mock_publish,
     _mock_register,
 ) -> None:
@@ -131,3 +136,61 @@ def test_run_training_pipeline(
     result = run_training_pipeline()
     assert result.model_version == "v1"
     assert result.validated_customers == 10
+    mock_seed.assert_called_once()
+
+
+def test_resolve_baseline_model_dir_uses_repo_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("IMAGE_TAG", "run-1")
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.pkl").write_bytes(b"x")
+    monkeypatch.setenv("BASELINE_MODEL_DIR", str(model_dir))
+    config = load_config()
+    assert resolve_baseline_model_dir(config) == model_dir
+
+
+def test_seed_baseline_model_if_needed_skips_when_registry_not_empty() -> None:
+    aws = MagicMock()
+    aws.has_model_packages.return_value = True
+    arn = seed_baseline_model_if_needed(
+        {
+            "model_bucket": "bucket",
+            "inference_image_uri": "image",
+            "model_package_group_name": "group",
+            "model_output_dir": "/tmp/model",
+        },
+        aws,
+    )
+    assert arn is None
+    aws.upload_model_directory.assert_not_called()
+
+
+def test_seed_baseline_model_if_needed_registers_case_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_TAG", "run-1")
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model.pkl").write_bytes(b"model")
+    (model_dir / "model_card.json").write_text("{}", encoding="utf-8")
+
+    aws = MagicMock()
+    aws.has_model_packages.return_value = False
+    aws.upload_model_directory.return_value = "s3://bucket/baseline/model.tar.gz"
+    aws.register_model_package.return_value = "arn:baseline"
+
+    config = load_config()
+    config.update(
+        {
+            "model_bucket": "bucket",
+            "inference_image_uri": "image",
+            "model_package_group_name": "group",
+            "model_output_dir": str(tmp_path / "output"),
+            "baseline_model_dir": str(model_dir),
+        }
+    )
+
+    arn = seed_baseline_model_if_needed(config, aws)
+    assert arn == "arn:baseline"
+    aws.register_model_package.assert_called_once()

@@ -58,3 +58,17 @@ def test_register_model_package_creates_group_when_missing(connector: AwsConnect
         description="desc",
     )
     assert arn == "arn:package"
+
+
+def test_has_model_packages_returns_true_when_versions_exist(connector: AwsConnector) -> None:
+    connector.sagemaker_client.list_model_packages.return_value = {
+        "ModelPackageSummaryList": [{"ModelPackageVersion": 1}]
+    }
+    assert connector.has_model_packages("group") is True
+
+
+def test_has_model_packages_returns_false_when_empty(connector: AwsConnector) -> None:
+    connector.sagemaker_client.list_model_packages.return_value = {
+        "ModelPackageSummaryList": []
+    }
+    assert connector.has_model_packages("group") is False

@@ -70,7 +70,6 @@ def test_filtered_endpoint_and_metrics() -> None:
             "limit": 2,
             "exclude_product_ids": ["p_002"],
             "min_recommendation_score": 0.5,
-            "context": {"device": "mobile", "campaign": "black_friday"},
         },
     )
     assert response.status_code == 200

@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import sys
+import tarfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -21,6 +23,7 @@ class PipelineResult:
     model_output_dir: str
     model_s3_uri: str
     model_package_arn: str
+    baseline_model_package_arn: str | None
     accuracy: str
     roc_auc: str
     validated_customers: int
@@ -66,6 +69,11 @@ def load_config() -> dict[str, str]:
         ),
         "inference_image_uri": os.getenv("INFERENCE_IMAGE_URI", ""),
         "model_version": image_tag,
+        "baseline_model_dir": os.getenv("BASELINE_MODEL_DIR", "").strip(),
+        "baseline_model_prefix": os.getenv(
+            "BASELINE_MODEL_PREFIX",
+            "models/purchase_propensity/case-baseline-v1",
+        ),
     }
 
 
@@ -112,6 +120,111 @@ def load_datasets(
         products_path=str(products_path),
     )
     return events, products
+
+
+def resolve_baseline_model_dir(config: dict[str, str]) -> Path:
+    """Resolve the directory containing the case baseline ``model.pkl``."""
+    if config["baseline_model_dir"]:
+        return Path(config["baseline_model_dir"])
+
+    for candidate in (
+        Path("/app/model"),
+        Path(__file__).resolve().parents[2] / "model",
+    ):
+        if (candidate / "model.pkl").exists() or (candidate / "model.tar.gz").exists():
+            return candidate
+
+    return Path("/app/model")
+
+
+def prepare_baseline_model_dir(source_dir: Path, work_dir: Path) -> Path:
+    """Return a directory with ``model.pkl`` ready to upload to SageMaker."""
+    if (source_dir / "model.pkl").exists():
+        return source_dir
+
+    archive_path = source_dir / "model.tar.gz"
+    if not archive_path.exists():
+        raise FileNotFoundError(
+            "Baseline model not found. Expected model.pkl or model.tar.gz in "
+            f"{source_dir}"
+        )
+
+    extract_dir = work_dir / "baseline-model"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        extract_kwargs: dict[str, str] = {}
+        if hasattr(tarfile, "data_filter"):
+            extract_kwargs["filter"] = "data"
+        archive.extractall(extract_dir, **extract_kwargs)
+
+    if not (extract_dir / "model.pkl").exists():
+        raise FileNotFoundError(
+            f"Baseline archive {archive_path} does not contain model.pkl"
+        )
+
+    model_card_source = source_dir / "model_card.json"
+    if model_card_source.exists() and not (extract_dir / "model_card.json").exists():
+        shutil.copy2(model_card_source, extract_dir / "model_card.json")
+
+    return extract_dir
+
+
+def seed_baseline_model_if_needed(
+    config: dict[str, str],
+    aws_connector: AwsConnector,
+) -> str | None:
+    """Register the bundled case model as version 1 when the registry is empty."""
+    if not config["model_bucket"] or not config["inference_image_uri"]:
+        logger.warning(
+            "baseline_model_seed_skipped",
+            reason="model_bucket_or_inference_image_not_configured",
+        )
+        return None
+
+    if aws_connector.has_model_packages(config["model_package_group_name"]):
+        logger.info(
+            "baseline_model_seed_skipped",
+            reason="model_registry_not_empty",
+            model_package_group_name=config["model_package_group_name"],
+        )
+        return None
+
+    source_dir = resolve_baseline_model_dir(config)
+    staging_dir = prepare_baseline_model_dir(
+        source_dir,
+        Path(config["model_output_dir"]).parent / "baseline-model-staging",
+    )
+    logger.info(
+        "baseline_model_seed_started",
+        source_dir=str(source_dir),
+        staging_dir=str(staging_dir),
+        model_package_group_name=config["model_package_group_name"],
+    )
+
+    model_s3_uri = aws_connector.upload_model_directory(
+        local_dir=staging_dir,
+        bucket=config["model_bucket"],
+        prefix=config["baseline_model_prefix"],
+    )
+    baseline_arn = aws_connector.register_model_package(
+        model_package_group_name=config["model_package_group_name"],
+        model_data_url=model_s3_uri,
+        image_uri=config["inference_image_uri"],
+        model_name="purchase_propensity_v1",
+        description=(
+            "Baseline purchase propensity model shipped with the case "
+            "(model/model.pkl), registered as version 1."
+        ),
+    )
+    logger.info(
+        "baseline_model_seed_completed",
+        baseline_model_package_arn=baseline_arn,
+        model_s3_uri=model_s3_uri,
+    )
+    return baseline_arn
 
 
 def publish_model_artifact(
@@ -170,7 +283,7 @@ def register_model_version(
         model_package_group_name=config["model_package_group_name"],
         model_data_url=model_s3_uri,
         image_uri=config["inference_image_uri"],
-        model_name="purchase_propensity_v1",
+        model_name=f"purchase_propensity_{config['model_version']}",
         description=(
             f"Purchase propensity model version {config['model_version']} "
             "generated by ECS training task."
@@ -194,6 +307,8 @@ def run_training_pipeline() -> PipelineResult:
     aws_connector = AwsConnector()
     model_handler = ModelHandler()
 
+    baseline_model_package_arn = seed_baseline_model_if_needed(config, aws_connector)
+
     events, products = load_datasets(config, aws_connector)
     output_dir = Path(config["model_output_dir"])
     handler_result = model_handler.train_and_persist(
@@ -212,6 +327,7 @@ def run_training_pipeline() -> PipelineResult:
         model_output_dir=str(output_dir),
         model_s3_uri=model_s3_uri,
         model_package_arn=model_package_arn,
+        baseline_model_package_arn=baseline_model_package_arn,
         accuracy=str(training_result.metrics["accuracy"]),
         roc_auc=str(training_result.metrics["roc_auc"]),
         validated_customers=training_result.validated_customers,
@@ -221,6 +337,7 @@ def run_training_pipeline() -> PipelineResult:
         model_version=result.model_version,
         model_s3_uri=result.model_s3_uri,
         model_package_arn=result.model_package_arn,
+        baseline_model_package_arn=result.baseline_model_package_arn,
         accuracy=result.accuracy,
         roc_auc=result.roc_auc,
         validated_customers=result.validated_customers,

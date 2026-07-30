@@ -80,3 +80,9 @@ variable "run_model_predict_on_apply" {
   type        = bool
   default     = true
 }
+
+variable "run_model_train_on_apply" {
+  description = "When true, trigger a one-off model_train ECS task after terraform apply."
+  type        = bool
+  default     = true
+}

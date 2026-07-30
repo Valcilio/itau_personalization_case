@@ -26,12 +26,24 @@ def test_get_filtered_recommendations_applies_filters() -> None:
             "limit": 2,
             "exclude_product_ids": ["p_002"],
             "min_recommendation_score": 0.5,
-            "context": {"campaign": "black_friday"},
         }
     )
     assert payload["count"] == 2
-    assert payload["context"]["campaign"] == "black_friday"
+    assert payload["category"] is None
     assert all(item["product_id"] != "p_002" for item in payload["recommendations"])
+
+
+def test_get_filtered_recommendations_applies_category_filter() -> None:
+    payload = build_recommendations_handler().get_filtered_recommendations(
+        {
+            "user_id": "u_0231",
+            "limit": 5,
+            "category": "moda",
+        }
+    )
+    assert payload["count"] == 1
+    assert payload["category"] == "moda"
+    assert payload["recommendations"][0]["category"] == "moda"
 
 
 def test_get_filtered_recommendations_uses_cold_start() -> None:

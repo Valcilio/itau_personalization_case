@@ -26,7 +26,7 @@ class RecommendationFilters:  # pylint: disable=too-many-instance-attributes
     user_id: str
     limit: int | None = None
     exclude_product_ids: list[str] = field(default_factory=list)
-    context: dict[str, Any] = field(default_factory=dict)
+    category: str | None = None
     categories: list[str] = field(default_factory=list)
     exclude_categories: list[str] = field(default_factory=list)
     min_price: float | None = None
@@ -105,11 +105,16 @@ class User:
                     f"allowed={sorted(ALLOWED_CATEGORIES)}"
                 )
 
-        context = payload.get("context", {})
-        if context is None:
-            context = {}
-        if not isinstance(context, dict):
-            raise ValueError("context must be an object")
+        category = payload.get("category")
+        if category is not None:
+            if not isinstance(category, str) or not category.strip():
+                raise ValueError("category must be a non-empty string")
+            category = category.strip()
+            if category not in ALLOWED_CATEGORIES:
+                raise ValueError(
+                    f"unsupported category '{category}'. "
+                    f"allowed={sorted(ALLOWED_CATEGORIES)}"
+                )
 
         min_price = cls._optional_float(payload.get("min_price"), "min_price")
         max_price = cls._optional_float(payload.get("max_price"), "max_price")
@@ -142,7 +147,7 @@ class User:
             user_id=user.user_id,
             limit=limit,
             exclude_product_ids=exclude_product_ids,
-            context=context,
+            category=category,
             categories=categories,
             exclude_categories=exclude_categories,
             min_price=min_price,

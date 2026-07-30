@@ -12,5 +12,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/model_train ./src/model_train
+COPY model/ ./model/
+
+ENV BASELINE_MODEL_DIR=/app/model
 
 CMD ["python", "-m", "model_train.main"]

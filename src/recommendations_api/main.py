@@ -145,7 +145,7 @@ async def post_recommendation_filtered(request: Request) -> dict[str, Any]:
             latency_ms=round(timer.elapsed_ms(), 2),
             cold_start_flag=is_cold_start,
             count=response.get("count"),
-            context=payload.get("context", {}),
+            category=payload.get("category"),
             source="dynamodb_predictions",
         )
         return response

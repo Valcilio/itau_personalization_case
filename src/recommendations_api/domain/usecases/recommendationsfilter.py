@@ -37,6 +37,9 @@ class RecommendationsFilter:
                 ~filtered["product_id"].isin(filters.exclude_product_ids)
             ]
 
+        if filters.category and "category" in filtered.columns and not filtered.empty:
+            filtered = filtered[filtered["category"] == filters.category]
+
         if filters.categories and "category" in filtered.columns and not filtered.empty:
             filtered = filtered[filtered["category"].isin(filters.categories)]
 
@@ -84,6 +87,6 @@ class RecommendationsFilter:
             initial_rows=initial_rows,
             filtered_rows=len(filtered),
             limit=filters.limit,
-            context=filters.context,
+            category=filters.category,
         )
         return filtered

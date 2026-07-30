@@ -75,12 +75,10 @@ Explicando melhor a API de consumo:
                             - user_id (obrigatório): identifica o usuário alvo da recomendação;
                             - limit (opcional): quantidade máxima de produtos retornados após o ranking filtrado;
                             - exclude_product_ids (opcional): remove product_ids da resposta (ex.: itens já no carrinho ou já visualizados);
-                            - context (opcional): metadados da requisição (ex.: device, campaign). Neste case não altera o score do modelo;
-                            deve ser registrado em logs estruturados e documentado para uso futuro em produção
-                            (ex.: re-ranking por canal, campanhas, experimentos A/B).
-                        Filtros extras planejados (usando o schema de products/predictions):
-                            - categories / exclude_categories: inclui ou remove produtos por categoria
+                            - category (opcional): filtra produtos de uma categoria específica
                             (beleza, casa, eletronicos, esporte, livros, moda);
+                        Filtros extras planejados (usando o schema de products/predictions):
+                            - categories / exclude_categories: inclui ou remove produtos por múltiplas categorias;
                             - min_price / max_price: restringe a faixa de preço;
                             - min_avg_rating: remove produtos abaixo da avaliação mínima;
                             - min_popularity_score: remove produtos pouco populares;
@@ -92,6 +90,7 @@ Explicando melhor a API de consumo:
                             - user_id no padrão u_XXXX;
                             - limit > 0 quando informado;
                             - exclude_product_ids / categories como listas de strings válidas;
+                            - category como string entre as categorias suportadas;
                             - faixas numéricas coerentes (ex.: min_price <= max_price; scores entre 0 e 1 quando aplicável).
             - Se for /health ou metrics, não precisaremos válidar nada.
 

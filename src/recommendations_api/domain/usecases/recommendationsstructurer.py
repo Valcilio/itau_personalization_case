@@ -86,7 +86,7 @@ class RecommendationsStructurer:
         user_id: str,
         recommendations: pd.DataFrame,
         is_cold_start: bool,
-        context: dict[str, Any] | None = None,
+        category: str | None = None,
     ) -> dict[str, Any]:
         """Build the detailed response for ``POST /recommendation_filtered``.
 
@@ -98,7 +98,7 @@ class RecommendationsStructurer:
             user_id: Requested user identifier.
             recommendations: Filtered recommendation rows.
             is_cold_start: Whether cold-start fallback was used.
-            context: Optional request context for observability echo.
+            category: Optional category filter applied to the request.
 
         Returns:
             JSON-serializable response payload including ``cold_start_flag``.
@@ -137,7 +137,7 @@ class RecommendationsStructurer:
             "user_id": user_id,
             "cold_start_flag": is_cold_start,
             "count": len(records),
-            "context": context or {},
+            "category": category,
             "recommendations": records,
         }
         self.logger.info(
@@ -146,6 +146,6 @@ class RecommendationsStructurer:
             count=len(records),
             cold_start_flag=is_cold_start,
             mode="detailed",
-            context=context or {},
+            category=category,
         )
         return payload

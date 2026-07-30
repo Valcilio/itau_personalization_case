@@ -61,7 +61,7 @@ def test_recommendations_api_reads_predictions_from_dynamodb(live_client) -> Non
             "user_id": "u_0231",
             "limit": 5,
             "exclude_product_ids": [],
-            "context": {"device": "integration-test"},
+            "category": "moda",
         },
     )
     assert filtered.status_code == 200

@@ -24,11 +24,17 @@ def test_validate_filtered_request_parses_payload() -> None:
             "categories": ["livros"],
             "min_price": 5,
             "max_price": 40,
-            "context": {"device": "mobile"},
+            "category": "livros",
         }
     )
     assert filters.limit == 5
     assert filters.exclude_product_ids == ["p_001"]
+    assert filters.category == "livros"
+
+
+def test_validate_filtered_request_rejects_invalid_category() -> None:
+    with pytest.raises(ValueError, match="unsupported category"):
+        User.validate_filtered_request({"user_id": "u_0231", "category": "invalid"})
 
 
 def test_validate_filtered_request_rejects_invalid_price_range() -> None:
