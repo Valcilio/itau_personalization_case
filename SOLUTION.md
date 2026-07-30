@@ -20,7 +20,7 @@ A solução separa **treino**, **predição em batch**, **monitoramento de drift
 ### Arquitetura na AWS
 
 <p align="center">
-  <img src="https://i.imgur.com/oiSi8dO.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
+  <img src="https://i.imgur.com/GnOrbl6.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
 </p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
@@ -1369,6 +1369,5 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 - Model card: `model/model_card.json`
 - Planejamento de arquitetura: `PLAN.md`
 - **Reproduzir em outro ambiente AWS:** [Passo a passo — reproduzir o case em outro ambiente AWS](#passo-a-passo--reproduzir-o-case-em-outro-ambiente-aws)
-- Notebook de registro manual (legado): `notebooks/register_actual_model.ipynb` — substituído pelo seed automático em `model_train`
 - Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb` — série interativa de testes da API (manual + automatizado); equivalente a `tests/api_tests/`
 - Notebook de carga: `notebooks/api_load_test.ipynb`
