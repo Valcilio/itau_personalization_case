@@ -108,8 +108,10 @@ class FeatureEngineer:
         features["user_affinity_match"] = (
             features["category"] == features["top_affinity_category"]
         ).astype(int)
+        users_with_history = set(self.events["user_id"].unique())
+        features["is_cold_start"] = ~features["user_id"].isin(users_with_history)
 
-        return features[["user_id", "product_id", *self.FEATURE_COLUMNS]]
+        return features[["user_id", "product_id", "is_cold_start", *self.FEATURE_COLUMNS]]
 
     def _compute_user_top_affinity_category(self) -> pd.DataFrame:
         """Compute each user's top affinity category from historical events."""

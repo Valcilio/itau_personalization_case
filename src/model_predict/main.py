@@ -134,7 +134,10 @@ def format_predictions_for_output(predictions: pd.DataFrame) -> pd.DataFrame:
         .sort_values(["user_id", "product_id"], ascending=False)
         .reset_index(drop=True)
     )
-    formatted["is_cold_start"] = False
+    if "is_cold_start" not in formatted.columns:
+        formatted["is_cold_start"] = False
+    else:
+        formatted["is_cold_start"] = formatted["is_cold_start"].astype(bool)
     return formatted[
         [
             "user_id",
@@ -148,6 +151,35 @@ def format_predictions_for_output(predictions: pd.DataFrame) -> pd.DataFrame:
             "recommendation_score",
         ]
     ]
+
+
+def validate_predictions_coverage(
+    events: pd.DataFrame,
+    products: pd.DataFrame,
+    predictions: pd.DataFrame,
+) -> None:
+    """Ensure the prediction snapshot covers every user×product pair."""
+    expected_users = int(events["user_id"].nunique())
+    expected_products = int(products["product_id"].nunique())
+    actual_users = int(predictions["user_id"].nunique())
+    actual_products = int(predictions["product_id"].nunique())
+    expected_rows = expected_users * expected_products
+
+    if actual_users != expected_users:
+        raise ValueError(
+            "Prediction snapshot is missing users: "
+            f"expected {expected_users}, got {actual_users}"
+        )
+    if actual_products != expected_products:
+        raise ValueError(
+            "Prediction snapshot is missing products: "
+            f"expected {expected_products}, got {actual_products}"
+        )
+    if len(predictions) != expected_rows:
+        raise ValueError(
+            "Prediction snapshot has unexpected row count: "
+            f"expected {expected_rows}, got {len(predictions)}"
+        )
 
 
 def run_prediction_pipeline() -> PipelineResult:
@@ -169,6 +201,12 @@ def run_prediction_pipeline() -> PipelineResult:
     model_handler = ModelHandler()
 
     events, products = load_datasets(config, aws_connector)
+    logger.info(
+        "datasets_user_coverage",
+        users=int(events["user_id"].nunique()),
+        products=int(products["product_id"].nunique()),
+        events_rows=len(events),
+    )
     artifact_dir = aws_connector.download_model_artifact(
         model_package_group_name=config["model_package_group_name"],
         local_dir=config["local_model_dir"],
@@ -179,9 +217,11 @@ def run_prediction_pipeline() -> PipelineResult:
         artifact_dir=artifact_dir,
     )
     predictions = format_predictions_for_output(handler_result.predictions)
+    validate_predictions_coverage(events, products, predictions)
     logger.info(
         "predictions_formatted_for_output",
         rows=len(predictions),
+        unique_users=int(predictions["user_id"].nunique()),
         columns=list(predictions.columns),
     )
 

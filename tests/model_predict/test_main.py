@@ -14,6 +14,7 @@ from model_predict.main import (
     load_datasets,
     main,
     run_prediction_pipeline,
+    validate_predictions_coverage,
 )
 
 
@@ -73,6 +74,27 @@ def test_format_predictions_for_output() -> None:
     formatted = format_predictions_for_output(predictions)
     assert "recommendation_score" in formatted.columns
     assert "purchase_proba" not in formatted.columns
+    assert formatted["is_cold_start"].eq(False).all()
+
+
+def test_validate_predictions_coverage_accepts_full_cartesian_product() -> None:
+    events = pd.DataFrame({"user_id": ["u_1", "u_2"], "product_id": ["p_1", "p_2"], "event_type": ["view", "view"]})
+    products = pd.DataFrame({"product_id": ["p_1", "p_2"], "category": ["moda", "livros"], "price": [1.0, 2.0], "avg_rating": [4.0, 4.0], "popularity_score": [0.5, 0.5]})
+    predictions = pd.DataFrame(
+        {
+            "user_id": ["u_1", "u_1", "u_2", "u_2"],
+            "product_id": ["p_1", "p_2", "p_1", "p_2"],
+        }
+    )
+    validate_predictions_coverage(events, products, predictions)
+
+
+def test_validate_predictions_coverage_rejects_missing_users() -> None:
+    events = pd.DataFrame({"user_id": ["u_1", "u_2"], "product_id": ["p_1", "p_1"], "event_type": ["view", "view"]})
+    products = pd.DataFrame({"product_id": ["p_1"], "category": ["moda"], "price": [1.0], "avg_rating": [4.0], "popularity_score": [0.5]})
+    predictions = pd.DataFrame({"user_id": ["u_1"], "product_id": ["p_1"]})
+    with pytest.raises(ValueError, match="missing users"):
+        validate_predictions_coverage(events, products, predictions)
 
 
 @patch("model_predict.main.ModelRunnerLogger.configure")
@@ -121,19 +143,32 @@ def test_run_prediction_pipeline_returns_summary(
     handler.run_predictions.return_value = MagicMock(
         predictions=pd.DataFrame(
             {
-                "user_id": ["u_1"],
-                "product_id": ["p_1"],
-                "interactions": [1],
-                "price": [10.0],
-                "avg_rating": [4.0],
-                "popularity_score": [0.5],
-                "user_affinity_match": [1],
-                "purchase_proba": [0.8],
+                "user_id": ["u_1", "u_1"],
+                "product_id": ["p_1", "p_2"],
+                "is_cold_start": [False, False],
+                "interactions": [1, 0],
+                "price": [10.0, 20.0],
+                "avg_rating": [4.0, 3.5],
+                "popularity_score": [0.5, 0.2],
+                "user_affinity_match": [1, 0],
+                "purchase_proba": [0.8, 0.2],
             }
         ),
-        validated_costumers=1,
+        validated_costumers=2,
+    )
+    mock_load_datasets.return_value = (
+        pd.DataFrame({"user_id": ["u_1"], "product_id": ["p_1"], "event_type": ["view"]}),
+        pd.DataFrame(
+            {
+                "product_id": ["p_1", "p_2"],
+                "category": ["moda", "livros"],
+                "price": [10.0, 20.0],
+                "avg_rating": [4.0, 3.5],
+                "popularity_score": [0.5, 0.2],
+            }
+        ),
     )
 
     result = run_prediction_pipeline()
-    assert result.prediction_rows == 1
+    assert result.prediction_rows == 2
     connector.replace_predictions_table.assert_called_once()

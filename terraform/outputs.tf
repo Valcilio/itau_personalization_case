@@ -98,6 +98,21 @@ output "predictions_dynamodb_table_arn" {
   value       = aws_dynamodb_table.predictions.arn
 }
 
+output "integration_predictions_dynamodb_table_name" {
+  description = "DynamoDB table used by integration tests for model_predict outputs."
+  value       = aws_dynamodb_table.integration_predictions.name
+}
+
+output "integration_predictions_dynamodb_table_arn" {
+  description = "ARN of the integration-test DynamoDB predictions table."
+  value       = aws_dynamodb_table.integration_predictions.arn
+}
+
+output "integration_model_package_group_name" {
+  description = "SageMaker Model Registry group used by integration tests for model_train."
+  value       = aws_sagemaker_model_package_group.integration.model_package_group_name
+}
+
 output "recommendations_api_ecr_repository_url" {
   description = "ECR repository URL for the recommendations API image."
   value       = aws_ecr_repository.services["recommendations_api"].repository_url

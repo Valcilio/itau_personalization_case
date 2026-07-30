@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 import boto3
 import pandas as pd
-from boto3.dynamodb.types import TypeSerializer
 
 from model_predict.domain.utils.modelrunnerlogger import ModelRunnerLogger
 
@@ -23,7 +22,6 @@ class AwsConnector:
     """
 
     HARDCODED_MODEL_PACKAGE_VERSION = 1
-    DYNAMODB_BATCH_SIZE = 25
 
     def __init__(self, region_name: str | None = None) -> None:
         """Initialize AWS clients for the configured region.
@@ -35,7 +33,7 @@ class AwsConnector:
         self.s3_client = boto3.client("s3", region_name=self.region_name)
         self.sagemaker_client = boto3.client("sagemaker", region_name=self.region_name)
         self.dynamodb_client = boto3.client("dynamodb", region_name=self.region_name)
-        self._serializer = TypeSerializer()
+        self.dynamodb_resource = boto3.resource("dynamodb", region_name=self.region_name)
         self.logger = ModelRunnerLogger(self.__class__.__name__)
         self.logger.info("aws_connector_initialized", region=self.region_name)
 
@@ -283,36 +281,21 @@ class AwsConnector:
             "recommendation_score": Decimal(str(row["recommendation_score"])),
         }
 
-    def _serialize_item(self, item: dict) -> dict:
-        """Serialize a native item into DynamoDB attribute-value format."""
-        return {key: self._serializer.serialize(value) for key, value in item.items()}
-
-    def _scan_all_keys(self, table_name: str) -> list[dict]:
-        """Scan every primary key currently stored in the predictions table."""
-        keys: list[dict] = []
+    def _count_table_items(self, table_name: str) -> int:
+        """Return the number of items currently stored in a DynamoDB table."""
+        total = 0
         scan_kwargs: dict = {
             "TableName": table_name,
-            "ProjectionExpression": "user_id, product_id",
+            "Select": "COUNT",
         }
         while True:
             response = self.dynamodb_client.scan(**scan_kwargs)
-            keys.extend(response.get("Items", []))
+            total += int(response.get("Count", 0))
             last_evaluated_key = response.get("LastEvaluatedKey")
             if not last_evaluated_key:
                 break
             scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
-        return keys
-
-    def _batch_write(self, table_name: str, request_items: list[dict]) -> None:
-        """Write DynamoDB batch requests, retrying unprocessed items."""
-        for offset in range(0, len(request_items), self.DYNAMODB_BATCH_SIZE):
-            chunk = request_items[offset : offset + self.DYNAMODB_BATCH_SIZE]
-            unprocessed = {table_name: chunk}
-            while unprocessed.get(table_name):
-                response = self.dynamodb_client.batch_write_item(
-                    RequestItems=unprocessed,
-                )
-                unprocessed = response.get("UnprocessedItems", {})
+        return total
 
     def replace_predictions_table(
         self,
@@ -321,8 +304,9 @@ class AwsConnector:
     ) -> int:
         """Replace the DynamoDB table contents with the latest predictions.
 
-        Existing items are deleted and the new prediction snapshot is written in
-        full, so the table always reflects only the latest model_predict run.
+        New rows are upserted first and stale keys are removed afterwards, so a
+        partial failure never leaves the table empty. After the swap, the row
+        count is verified against the incoming snapshot.
 
         Args:
             table_name: Target DynamoDB table name.
@@ -330,39 +314,85 @@ class AwsConnector:
 
         Returns:
             Number of items written to the table.
+
+        Raises:
+            ValueError: If the post-write row count does not match the snapshot.
         """
+        if predictions.empty:
+            raise ValueError("predictions dataframe is empty")
+
+        unique_users = int(predictions["user_id"].nunique())
+        unique_products = int(predictions["product_id"].nunique())
         self.logger.info(
             "dynamodb_predictions_replace_started",
             table_name=table_name,
             incoming_rows=len(predictions),
+            unique_users=unique_users,
+            unique_products=unique_products,
         )
 
-        existing_keys = self._scan_all_keys(table_name)
-        if existing_keys:
-            delete_requests = [
-                {"DeleteRequest": {"Key": key}} for key in existing_keys
+        table = self.dynamodb_resource.Table(table_name)
+        new_keys: set[tuple[str, str]] = set()
+
+        with table.batch_writer(
+            overwrite_by_pkeys=["user_id", "product_id"],
+        ) as writer:
+            for row in predictions.itertuples(index=False):
+                item = self.prediction_row_to_item(pd.Series(row._asdict()))
+                writer.put_item(Item=item)
+                new_keys.add((item["user_id"], item["product_id"]))
+
+        self.logger.info(
+            "dynamodb_predictions_upserted",
+            table_name=table_name,
+            written_rows=len(new_keys),
+            unique_users=unique_users,
+        )
+
+        scan_kwargs: dict = {"ProjectionExpression": "user_id, product_id"}
+        deleted_rows = 0
+        while True:
+            response = table.scan(**scan_kwargs)
+            stale_items = [
+                item
+                for item in response.get("Items", [])
+                if (item["user_id"], item["product_id"]) not in new_keys
             ]
-            self._batch_write(table_name, delete_requests)
+            if stale_items:
+                with table.batch_writer() as writer:
+                    for item in stale_items:
+                        writer.delete_item(
+                            Key={
+                                "user_id": item["user_id"],
+                                "product_id": item["product_id"],
+                            }
+                        )
+                deleted_rows += len(stale_items)
+
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break
+            scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+        if deleted_rows:
             self.logger.info(
-                "dynamodb_predictions_cleared",
+                "dynamodb_predictions_stale_rows_removed",
                 table_name=table_name,
-                deleted_rows=len(existing_keys),
+                deleted_rows=deleted_rows,
             )
 
-        put_requests = [
-            {
-                "PutRequest": {
-                    "Item": self._serialize_item(self.prediction_row_to_item(row)),
-                }
-            }
-            for _, row in predictions.iterrows()
-        ]
-        if put_requests:
-            self._batch_write(table_name, put_requests)
+        stored_rows = self._count_table_items(table_name)
+        if stored_rows != len(predictions):
+            raise ValueError(
+                "DynamoDB predictions row count mismatch after replace: "
+                f"expected {len(predictions)}, found {stored_rows}"
+            )
 
         self.logger.info(
             "dynamodb_predictions_replace_completed",
             table_name=table_name,
-            written_rows=len(put_requests),
+            written_rows=len(predictions),
+            unique_users=unique_users,
+            stored_rows=stored_rows,
         )
-        return len(put_requests)
+        return len(predictions)

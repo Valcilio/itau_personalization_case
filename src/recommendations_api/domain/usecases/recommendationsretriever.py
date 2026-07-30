@@ -9,6 +9,15 @@ import pandas as pd
 from recommendations_api.domain.utils.apilogger import ApiLogger
 
 
+def resolve_is_cold_start(predictions: pd.DataFrame) -> bool:
+    """Return whether the user should be treated as cold start."""
+    if predictions.empty:
+        return True
+    if "is_cold_start" not in predictions.columns:
+        return False
+    return bool(predictions["is_cold_start"].astype(bool).iloc[0])
+
+
 class PredictionsGateway(Protocol):
     """Minimal gateway contract required by the retriever."""
 
@@ -61,7 +70,7 @@ class RecommendationsRetriever:
         predictions = self.aws_connector.get_user_predictions(user_id)
         if not predictions.empty and "user_id" in predictions.columns:
             predictions = predictions[predictions["user_id"] == user_id].copy()
-        is_cold_start = predictions.empty
+        is_cold_start = resolve_is_cold_start(predictions)
         if is_cold_start:
             self.logger.info("cold_start_fallback_selected", user_id=user_id)
             predictions = self.aws_connector.get_cold_start_predictions(resolved_limit)

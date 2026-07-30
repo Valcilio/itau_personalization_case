@@ -30,3 +30,4 @@ def test_build_returns_scaled_features(sample_events, sample_products) -> None:
     assert list(scaled_features.columns) == list(Costumer.FEATURE_COLUMNS)
     assert "user_id" in features.columns
     assert "product_id" in features.columns
+    assert features["is_cold_start"].eq(False).all()

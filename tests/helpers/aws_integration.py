@@ -105,7 +105,10 @@ def model_train_env(outputs: dict[str, str], run_id: str) -> dict[str, str]:
         "MODEL_PREFIX": f"models/purchase_propensity/{run_id}",
         "MODEL_OUTPUT_DIR": f"/tmp/model-train-{run_id}",
         "TRAINING_DATA_DIR": f"/tmp/training-data-{run_id}",
-        "MODEL_PACKAGE_GROUP_NAME": outputs["model_package_group_name"],
+        "MODEL_PACKAGE_GROUP_NAME": require_terraform_output(
+            outputs,
+            "integration_model_package_group_name",
+        ),
         "INFERENCE_IMAGE_URI": outputs["model_train_image_uri"],
         "LOG_LEVEL": "INFO",
     }
@@ -118,8 +121,11 @@ def model_predict_env(outputs: dict[str, str], run_id: str) -> dict[str, str]:
         "DATA_BUCKET": outputs["data_bucket_name"],
         "DATA_PREFIX": os.getenv("DATA_PREFIX", "training-data"),
         "PREDICTIONS_BUCKET": outputs["data_bucket_name"],
-        "PREDICTIONS_PREFIX": os.getenv("PREDICTIONS_PREFIX", "predictions"),
-        "PREDICTIONS_DYNAMODB_TABLE": outputs["predictions_dynamodb_table_name"],
+        "PREDICTIONS_PREFIX": f"integration/predictions/{run_id}",
+        "PREDICTIONS_DYNAMODB_TABLE": require_terraform_output(
+            outputs,
+            "integration_predictions_dynamodb_table_name",
+        ),
         "MODEL_PACKAGE_GROUP_NAME": outputs["model_package_group_name"],
         "LOCAL_DATA_DIR": f"/tmp/predict-data-{run_id}",
         "LOCAL_MODEL_DIR": f"/tmp/predict-model-{run_id}",
@@ -136,7 +142,7 @@ def recommendations_api_env(outputs: dict[str, str]) -> dict[str, str]:
         "DATA_PREFIX": os.getenv("DATA_PREFIX", "training-data"),
         "PREDICTIONS_DYNAMODB_TABLE": require_terraform_output(
             outputs,
-            "predictions_dynamodb_table_name",
+            "integration_predictions_dynamodb_table_name",
         ),
         "LOG_LEVEL": "INFO",
     }

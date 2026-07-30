@@ -13,8 +13,10 @@ from model_predict.domain.gateways.awsconnector import AwsConnector
 @pytest.fixture
 def connector() -> AwsConnector:
     with patch("model_predict.domain.gateways.awsconnector.boto3.client") as mock_client:
-        mock_client.return_value = MagicMock()
-        yield AwsConnector(region_name="us-east-1")
+        with patch("model_predict.domain.gateways.awsconnector.boto3.resource") as mock_resource:
+            mock_client.return_value = MagicMock()
+            mock_resource.return_value = MagicMock()
+            yield AwsConnector(region_name="us-east-1")
 
 
 def test_init_initializes_clients(connector: AwsConnector) -> None:
@@ -118,23 +120,59 @@ def test_prediction_row_to_item_converts_types() -> None:
     assert item["recommendation_score"] == Decimal("0.91")
 
 
-def test_replace_predictions_table_writes_new_rows(connector: AwsConnector) -> None:
-    connector.dynamodb_client.scan.return_value = {
-        "Items": [{"user_id": {"S": "u_1"}, "product_id": {"S": "p_1"}}]
-    }
-    connector.dynamodb_client.batch_write_item.return_value = {}
+def test_replace_predictions_table_writes_all_users(connector: AwsConnector) -> None:
+    table = MagicMock()
+    batch_writer = MagicMock()
+    batch_writer.__enter__ = MagicMock(return_value=batch_writer)
+    batch_writer.__exit__ = MagicMock(return_value=False)
+    table.batch_writer.return_value = batch_writer
+    table.scan.return_value = {"Items": []}
+    connector.dynamodb_resource.Table.return_value = table
+    connector.dynamodb_client.scan.return_value = {"Count": 2, "ScannedCount": 2}
+
     predictions = pd.DataFrame(
         {
-            "user_id": ["u_2"],
-            "product_id": ["p_2"],
-            "is_cold_start": [False],
-            "interactions": [1],
-            "price": [10.0],
-            "avg_rating": [4.0],
-            "popularity_score": [0.5],
-            "user_affinity_match": [1],
-            "recommendation_score": [0.7],
+            "user_id": ["u_1", "u_2"],
+            "product_id": ["p_1", "p_2"],
+            "is_cold_start": [False, False],
+            "interactions": [1, 0],
+            "price": [10.0, 20.0],
+            "avg_rating": [4.0, 3.5],
+            "popularity_score": [0.5, 0.2],
+            "user_affinity_match": [1, 0],
+            "recommendation_score": [0.7, 0.3],
         }
     )
+
     written = connector.replace_predictions_table("table", predictions)
-    assert written == 1
+    assert written == 2
+    assert batch_writer.put_item.call_count == 2
+    assert predictions["user_id"].nunique() == 2
+
+
+def test_replace_predictions_table_raises_on_row_count_mismatch(connector: AwsConnector) -> None:
+    table = MagicMock()
+    batch_writer = MagicMock()
+    batch_writer.__enter__ = MagicMock(return_value=batch_writer)
+    batch_writer.__exit__ = MagicMock(return_value=False)
+    table.batch_writer.return_value = batch_writer
+    table.scan.return_value = {"Items": []}
+    connector.dynamodb_resource.Table.return_value = table
+    connector.dynamodb_client.scan.return_value = {"Count": 1, "ScannedCount": 1}
+
+    predictions = pd.DataFrame(
+        {
+            "user_id": ["u_1", "u_2"],
+            "product_id": ["p_1", "p_2"],
+            "is_cold_start": [False, False],
+            "interactions": [1, 0],
+            "price": [10.0, 20.0],
+            "avg_rating": [4.0, 3.5],
+            "popularity_score": [0.5, 0.2],
+            "user_affinity_match": [1, 0],
+            "recommendation_score": [0.7, 0.3],
+        }
+    )
+
+    with pytest.raises(ValueError, match="row count mismatch"):
+        connector.replace_predictions_table("table", predictions)

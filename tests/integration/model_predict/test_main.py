@@ -21,9 +21,12 @@ def test_run_prediction_pipeline_against_aws(terraform_outputs, integration_run_
     """Run the full prediction pipeline using real S3, SageMaker and DynamoDB."""
     env = model_predict_env(terraform_outputs, integration_run_id)
     table_name = env["PREDICTIONS_DYNAMODB_TABLE"]
+    production_table = terraform_outputs["predictions_dynamodb_table_name"]
 
     with temporary_env(env):
         result = run_prediction_pipeline()
+
+    assert table_name != production_table
 
     assert result.prediction_rows > 0
     assert result.validated_costumers > 0

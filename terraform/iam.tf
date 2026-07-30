@@ -100,6 +100,8 @@ data "aws_iam_policy_document" "ecs_task" {
     resources = [
       aws_dynamodb_table.predictions.arn,
       "${aws_dynamodb_table.predictions.arn}/index/*",
+      aws_dynamodb_table.integration_predictions.arn,
+      "${aws_dynamodb_table.integration_predictions.arn}/index/*",
     ]
   }
 }

@@ -6,3 +6,13 @@ resource "aws_sagemaker_model_package_group" "purchase_propensity" {
     Project = var.project_name
   }
 }
+
+resource "aws_sagemaker_model_package_group" "integration" {
+  model_package_group_name        = "${var.project_name}-integration-model-group"
+  model_package_group_description = "Isolated SageMaker Model Registry group for integration tests."
+
+  tags = {
+    Project = var.project_name
+    Purpose = "integration-tests"
+  }
+}

@@ -9,6 +9,7 @@ from recommendations_api.domain.gateways.awsconnector import AwsConnector
 from recommendations_api.domain.usecases.recommendationsfilter import RecommendationsFilter
 from recommendations_api.domain.usecases.recommendationsretriever import (
     RecommendationsRetriever,
+    resolve_is_cold_start,
 )
 from recommendations_api.domain.usecases.recommendationsstructurer import (
     RecommendationsStructurer,
@@ -78,7 +79,7 @@ class RecommendationsHandler:
             predictions = predictions[
                 predictions["user_id"] == filters.user_id
             ].copy()
-        is_cold_start = predictions.empty
+        is_cold_start = resolve_is_cold_start(predictions)
         if is_cold_start:
             fallback_limit = filters.limit or RecommendationsRetriever.DEFAULT_LIMIT
             predictions = self.aws_connector.get_cold_start_predictions(fallback_limit)

@@ -97,7 +97,11 @@ pytest tests/integration -m integration -s
 Ordem enforced: `model_train` → `model_predict` → `recommendations_api`.  
 O teste da API exige predições no DynamoDB (geradas pelo `model_predict`).
 
-> **Nota:** `model_predict` substitui ~30k linhas no DynamoDB e pode levar **vários minutos**.
+Os testes de integração **não alteram recursos de produção**:
+- `model_train` registra versões em `integration_model_package_group_name` (não no Model Group de produção).
+- `model_predict` e `recommendations_api` usam `integration_predictions_dynamodb_table_name` (tabela DynamoDB separada).
+
+> **Nota:** `model_predict` em produção substitui ~30k linhas no DynamoDB e pode levar **vários minutos**. O teste de integração escreve na tabela isolada com o mesmo volume.
 
 ### API local (sem ECS)
 
@@ -291,9 +295,9 @@ Três testes **sem mocks**, contra AWS real:
 
 | Ordem | Teste | Valida |
 |-------|-------|--------|
-| 1 | `model_train` | Pipeline de treino → S3 + SageMaker Registry |
-| 2 | `model_predict` | Pipeline completo → S3 + DynamoDB |
-| 3 | `recommendations_api` | `TestClient` + conectores reais (DynamoDB, S3, métricas) |
+| 1 | `model_train` | Pipeline de treino → S3 + SageMaker Registry (grupo de integração) |
+| 2 | `model_predict` | Pipeline completo → S3 + DynamoDB (tabela de integração) |
+| 3 | `recommendations_api` | `TestClient` + conectores reais (tabela DynamoDB de integração, S3, métricas) |
 
 O teste da API exercita HTTP de ponta a ponta (`TestClient` → FastAPI → handler → AWS), sem mockar camadas internas — atende ao requisito do README de integração com fluxo real.
 

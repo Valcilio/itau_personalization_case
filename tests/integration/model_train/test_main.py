@@ -18,9 +18,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.order(1)]
 def test_run_training_pipeline_against_aws(terraform_outputs, integration_run_id) -> None:
     """Run the full training pipeline using real S3 and SageMaker registry."""
     env = model_train_env(terraform_outputs, integration_run_id)
+    integration_group = env["MODEL_PACKAGE_GROUP_NAME"]
+    production_group = terraform_outputs["model_package_group_name"]
 
     with temporary_env(env):
         result = run_training_pipeline()
+
+    assert integration_group != production_group
+    assert integration_group in result.model_package_arn
 
     assert result.validated_customers > 0
     assert float(result.accuracy) >= 0.0

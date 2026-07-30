@@ -22,6 +22,14 @@ def test_retrieve_uses_cold_start_for_unknown_user() -> None:
     assert frame.iloc[0]["recommendation_score"] == frame.iloc[0]["popularity_score"]
 
 
+def test_retrieve_uses_stored_is_cold_start_flag() -> None:
+    predictions, products = sample_recommendation_data()
+    stored = predictions[predictions["user_id"] == "u_0231"].copy()
+    retriever = RecommendationsRetriever(FakeAwsConnector(stored, products))
+    _, cold_start = retriever.retrieve("u_0231", limit=2)
+    assert cold_start is False
+
+
 def test_retrieve_filters_other_users_rows() -> None:
     mixed_predictions = pd.DataFrame(
         {
