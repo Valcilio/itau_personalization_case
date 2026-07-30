@@ -62,14 +62,23 @@ data "aws_iam_policy_document" "ecs_task" {
   }
 
   statement {
-    sid = "EcsRunTask"
+    sid = "EcsRunTaskTaskDefinitions"
     actions = [
       "ecs:RunTask",
     ]
     resources = [
-      aws_ecs_task_definition.model_train.arn_without_revision,
-      aws_ecs_task_definition.model_predict.arn_without_revision,
-      aws_ecs_task_definition.model_drift_monitor.arn_without_revision,
+      "${aws_ecs_task_definition.model_train.arn_without_revision}:*",
+      "${aws_ecs_task_definition.model_predict.arn_without_revision}:*",
+      "${aws_ecs_task_definition.model_drift_monitor.arn_without_revision}:*",
+    ]
+  }
+
+  statement {
+    sid = "EcsRunTaskClusters"
+    actions = [
+      "ecs:RunTask",
+    ]
+    resources = [
       aws_ecs_cluster.model_train.arn,
       aws_ecs_cluster.model_predict.arn,
       aws_ecs_cluster.model_drift_monitor.arn,
