@@ -28,8 +28,8 @@ def test_run_training_pipeline_against_aws(terraform_outputs, integration_run_id
     assert integration_group in result.model_package_arn
 
     assert result.validated_customers > 0
-    assert float(result.accuracy) >= 0.0
-    assert float(result.roc_auc) >= 0.0
+    assert float(result.metrics.accuracy) >= 0.0
+    assert float(result.metrics.roc_auc) >= 0.0
     assert result.model_s3_uri.startswith("s3://")
     assert s3_object_exists(result.model_s3_uri)
     assert result.model_package_arn.startswith("arn:")
