@@ -23,23 +23,9 @@ jobs:
       contents: write
     uses: ./.github/workflows/cicd_general.yaml
 
-  cd-approval:
-    name: CD - Manual Approval
-    needs: ci-tag-release
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    environment: cd-approval
-    steps:
-      - name: Confirm deploy
-        run: |
-          echo "Deploy approved for branch=${{ github.ref_name }}"
-          echo "image_tag=${{ needs.ci-tag-release.outputs.image_tag }}"
-
   cd-docker-and-terraform:
     name: CD - model-train, model-predict and recommendations-api Deploy
-    needs:
-      - ci-tag-release
-      - cd-approval
+    needs: ci-tag-release
     if: github.event_name != 'pull_request'
     permissions:
       contents: read

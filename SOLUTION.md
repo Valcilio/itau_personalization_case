@@ -195,24 +195,21 @@ A esteira está em `.github/workflows/` e é orquestrada por `workflow.yaml` (**
 
 ### Gatilhos
 
-| Evento | CI (lint + testes) | Aprovação manual | CD (deploy AWS) |
-|--------|-------------------|------------------|-----------------|
-| `pull_request` | ✅ | ❌ | ❌ |
-| `push` (qualquer branch) | ✅ | ✅ (environment `cd-approval`) | ✅ após aprovar |
-| `workflow_dispatch` | ✅ | ✅ | ✅ após aprovar |
+| Evento | CI (lint + testes) | CD (deploy AWS) |
+|--------|-------------------|-----------------|
+| `pull_request` | ✅ | ❌ |
+| `push` (qualquer branch) | ✅ | ✅ |
+| `workflow_dispatch` | ✅ | ✅ |
 
 ### Visão geral dos workflows
 
 | Arquivo | Papel |
 |---------|--------|
-| `workflow.yaml` | Orquestrador principal — encadeia CI → tag → aprovação → CD |
+| `workflow.yaml` | Orquestrador principal — encadeia CI → tag → CD |
 | `pylint_and_pytest.yaml` | `pylint src` + `pytest -m "not integration"` |
 | `cicd_general.yaml` | Resolve `image_tag` e cria git tag em `main` |
 | `terraform_docker.yaml` | Terraform apply, push ECR, integração, train, predict, rollback |
 | `integration_tests.yaml` | `pytest tests/integration tests/api_tests -m integration` (timeout 90 min) |
-| `bootstrap_environments.yaml` | Cria/atualiza o environment `cd-approval` (manual via `workflow_dispatch`) |
-
-Configuração do environment: `.github/environments/cd-approval.json` + script `.github/scripts/ensure_github_environment.sh`.
 
 ### Fluxo completo (push)
 
@@ -225,11 +222,7 @@ workflow.yaml
   │       • main  → image_tag = v0.1.{run_number} + git tag
   │       • outras branches → image_tag = UAT
   │
-  ├─ 3. ensure-cd-environment ──── cria/atualiza environment `cd-approval` via GitHub API
-  │
-  ├─ 4. cd-approval ───────────── pausa até aprovação manual no environment `cd-approval`
-  │
-  └─ 5. cd-docker-and-terraform ─ só após aprovação
+  └─ 3. cd-docker-and-terraform ─ só se push (não PR)
           │
           ├─ deploy-terraform
           │     • backup do state (artifact para rollback)
@@ -261,14 +254,6 @@ workflow.yaml
 ```
 
 ### Decisões importantes da pipeline
-
-**Aprovação manual antes do CD.** Após o CI passar (`ci-quality` + `ci-tag-release`), o job `ensure-cd-environment` garante que o GitHub Environment **`cd-approval`** existe (config em `.github/environments/cd-approval.json`, script `.github/scripts/ensure_github_environment.sh`). Em seguida, `cd-approval` aguarda um revisor aprovar o deploy na UI do Actions (*Review deployments*). Sem aprovação, Terraform/ECR/integração/batch **não** rodam.
-
-Configuração no repositório GitHub:
-
-1. **Settings → Variables → Actions** → crie `CD_APPROVER_GITHUB_USERNAMES` com logins GitHub separados por vírgula (ex.: `alice,bob`). O pipeline registra esses usuários como *required reviewers* do environment.
-2. (Opcional) Rode manualmente **Bootstrap GitHub Environments** (`bootstrap_environments.yaml`) uma vez para provisionar o environment antes do primeiro push com CD.
-3. Para alterar políticas (branches, `wait_timer`, etc.), edite `.github/environments/cd-approval.json` e dispare o bootstrap ou um novo push.
 
 **Terraform antes das imagens.** O `apply` inicial cria/atualiza ECR, ECS, IAM, etc. As imagens Docker referenciam repositórios que já existem. O `image_tag` da pipeline é passado como variável Terraform e compõe as URIs das task definitions (`local.*_image_uri`).
 

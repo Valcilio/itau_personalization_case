@@ -1,9 +1,0 @@
-{
-  "name": "cd-approval",
-  "wait_timer": 0,
-  "prevent_self_review": true,
-  "deployment_branch_policy": {
-    "protected_branches": false,
-    "custom_branch_policies": false
-  }
-}
