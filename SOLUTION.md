@@ -123,7 +123,7 @@ Endpoints locais:
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/health` | Liveness |
-| `GET` | `/metrics` | Métricas Prometheus 0.0.4 |
+| `GET` | `/metrics` | Métricas Prometheus 0.0.4 (default) ou Datadog Metrics API v2 (`?format=datadog`) |
 | `GET` | `/recommendations/{user_id}` | Top-N recomendações (N=10) |
 | `POST` | `/recommendations_filtered` | Recomendações com filtros |
 
@@ -697,7 +697,11 @@ Componentes emitem logs via `ApiLogger` / `ModelRunnerLogger` / `ModelTrainerLog
 
 Campos principais por request: `user_id`, `latency_ms`, `cold_start_flag`, `count`, `source`. Em ECS, logs vão para CloudWatch (`watchtower` quando disponível).
 
-### Métricas (`GET /metrics`, Prometheus 0.0.4)
+### Métricas (`GET /metrics`)
+
+**Prometheus (default)** — `GET /metrics` ou `GET /metrics?format=prometheus`
+
+Content-Type: `text/plain; version=0.0.4`
 
 | Métrica | Tipo | Descrição |
 |---------|------|-----------|
@@ -706,6 +710,29 @@ Campos principais por request: `user_id`, `latency_ms`, `cold_start_flag`, `coun
 | `recommendations_api_cold_start_total` | Counter | Fallbacks cold start |
 | `recommendations_api_latency_ms` | Summary | p50/p95 + sum/count |
 | `recommendations_api_latency_avg_ms` | Gauge | Média |
+
+**Datadog (Metrics API v2)** — `GET /metrics?format=datadog`
+
+Retorna JSON no formato `series` aceito pelo endpoint [`POST /api/v2/series`](https://docs.datadoghq.com/api/latest/metrics/#submit-metrics), pronto para ingestão por agente, sidecar ou pipeline de observabilidade:
+
+```bash
+curl -H "x-api-key: $API_KEY" "$ENDPOINT/metrics?format=datadog"
+```
+
+| Métrica Datadog | Tipo (v2) | Descrição |
+|-----------------|-----------|-----------|
+| `recommendations_api.requests.total` | count (1) | Total de requests |
+| `recommendations_api.errors.total` | count (1) | Erros 4xx/5xx |
+| `recommendations_api.cold_start.total` | count (1) | Fallbacks cold start |
+| `recommendations_api.latency.count` | gauge (3) | Observações de latência |
+| `recommendations_api.latency.sum_ms` | gauge (3) | Soma das latências (ms) |
+| `recommendations_api.latency.avg_ms` | gauge (3) | Média (ms) |
+| `recommendations_api.latency.p50_ms` | gauge (3) | Percentil 50 (ms) |
+| `recommendations_api.latency.p95_ms` | gauge (3) | Percentil 95 (ms) |
+
+Todas as séries incluem a tag `service:recommendations_api`.
+
+**Ambos** — `GET /metrics?format=both` retorna JSON com `prometheus` (texto) e `datadog` (`series`).
 
 Métricas mantidas in-memory no container (`InMemoryMetricsStore`), expostas via `prometheus_client` e **replicadas em logs estruturados** para consulta histórica no CloudWatch:
 

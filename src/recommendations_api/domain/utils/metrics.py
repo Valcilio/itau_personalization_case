@@ -1,9 +1,9 @@
-"""Prometheus metrics backed by in-memory storage."""
+"""Prometheus and Datadog metrics backed by in-memory storage."""
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client.core import (
@@ -18,6 +18,100 @@ from recommendations_api.domain.gateways.metricsstore import (
     build_metrics_store,
 )
 from recommendations_api.domain.utils.apilogger import ApiLogger
+
+
+DatadogMetricType = Literal[1, 3]
+DEFAULT_DATADOG_TAGS = ("service:recommendations_api",)
+
+
+def _datadog_point(timestamp: int, value: float) -> dict[str, int | float]:
+    """Build one Datadog v2 series point."""
+    return {"timestamp": timestamp, "value": value}
+
+
+def _datadog_series_entry(
+    *,
+    metric: str,
+    metric_type: DatadogMetricType,
+    value: float,
+    timestamp: int,
+    tags: tuple[str, ...] = DEFAULT_DATADOG_TAGS,
+) -> dict[str, Any]:
+    """Build one Datadog Metrics API v2 series entry."""
+    return {
+        "metric": metric,
+        "type": metric_type,
+        "points": [_datadog_point(timestamp, value)],
+        "tags": list(tags),
+    }
+
+
+def build_datadog_series(
+    snapshot: MetricsSnapshot,
+    *,
+    timestamp: int | None = None,
+    tags: tuple[str, ...] = DEFAULT_DATADOG_TAGS,
+) -> list[dict[str, Any]]:
+    """Build Datadog Metrics API v2 ``series`` entries from a snapshot."""
+    ts = int(time.time()) if timestamp is None else timestamp
+    return [
+        _datadog_series_entry(
+            metric="recommendations_api.requests.total",
+            metric_type=1,
+            value=float(snapshot.requests_total),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.errors.total",
+            metric_type=1,
+            value=float(snapshot.errors_total),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.cold_start.total",
+            metric_type=1,
+            value=float(snapshot.cold_start_total),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.latency.count",
+            metric_type=3,
+            value=float(snapshot.latency_count),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.latency.sum_ms",
+            metric_type=3,
+            value=round(snapshot.latency_sum, 2),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.latency.avg_ms",
+            metric_type=3,
+            value=round(snapshot.latency_avg, 2),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.latency.p50_ms",
+            metric_type=3,
+            value=round(snapshot.latency_quantile(50), 2),
+            timestamp=ts,
+            tags=tags,
+        ),
+        _datadog_series_entry(
+            metric="recommendations_api.latency.p95_ms",
+            metric_type=3,
+            value=round(snapshot.latency_quantile(95), 2),
+            timestamp=ts,
+            tags=tags,
+        ),
+    ]
 
 
 def _snapshot_log_fields(snapshot: MetricsSnapshot) -> dict[str, Any]:
@@ -131,6 +225,19 @@ class MetricsCollector:
     def render_prometheus(self) -> str:
         """Render metrics in Prometheus text exposition format."""
         return generate_latest(self.registry).decode("utf-8")
+
+    def render_datadog(self) -> dict[str, list[dict[str, Any]]]:
+        """Render metrics in Datadog Metrics API v2 ``series`` format."""
+        return {
+            "series": build_datadog_series(self.store.load_snapshot()),
+        }
+
+    def render_combined(self) -> dict[str, Any]:
+        """Render Prometheus text and Datadog series in one payload."""
+        return {
+            "prometheus": self.render_prometheus(),
+            "datadog": self.render_datadog(),
+        }
 
 
 class Timer:

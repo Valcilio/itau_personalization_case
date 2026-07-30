@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from recommendations_api.domain.gateways.recommendationshandler import (
     RecommendationsHandler,
@@ -72,10 +72,30 @@ def health() -> dict[str, str]:
 
 
 @app.get("/metrics")
-def get_metrics() -> Response:
-    """Expose basic Prometheus metrics."""
+def get_metrics(
+    format: str = Query(
+        default="prometheus",
+        description=(
+            "Output format: prometheus (default), datadog (Metrics API v2 series), "
+            "or both (JSON with prometheus text + datadog series)."
+        ),
+    ),
+) -> Response:
+    """Expose Prometheus and Datadog-formatted metrics."""
     collector = get_metrics_collector()
     collector.log_snapshot(source="metrics_endpoint")
+
+    normalized = format.strip().lower()
+    if normalized == "datadog":
+        return JSONResponse(content=collector.render_datadog())
+    if normalized == "both":
+        return JSONResponse(content=collector.render_combined())
+    if normalized != "prometheus":
+        raise HTTPException(
+            status_code=400,
+            detail="format must be one of: prometheus, datadog, both",
+        )
+
     return PlainTextResponse(
         content=collector.render_prometheus(),
         media_type="text/plain; version=0.0.4",

@@ -92,3 +92,36 @@ def test_get_metrics_returns_prometheus_text(capsys) -> None:
     assert "text/plain" in response.headers.get("content-type", "")
     assert get_metrics.__name__ == "get_metrics"
     assert "api_metrics_snapshot" in capsys.readouterr().out
+
+
+def test_get_metrics_datadog_format() -> None:
+    _reset_app()
+    client = TestClient(app)
+    client.get("/recommendation/u_0231")
+
+    response = client.get("/metrics?format=datadog")
+    assert response.status_code == 200
+    body = response.json()
+    assert "series" in body
+    metrics = {item["metric"]: item for item in body["series"]}
+    assert metrics["recommendations_api.requests.total"]["type"] == 1
+    assert metrics["recommendations_api.latency.p95_ms"]["type"] == 3
+
+
+def test_get_metrics_both_format() -> None:
+    _reset_app()
+    client = TestClient(app)
+    client.get("/recommendation/u_0231")
+
+    response = client.get("/metrics?format=both")
+    assert response.status_code == 200
+    body = response.json()
+    assert "prometheus" in body
+    assert "datadog" in body
+    assert "recommendations_api_requests_total" in body["prometheus"]
+
+
+def test_get_metrics_invalid_format_returns_400() -> None:
+    _reset_app()
+    response = TestClient(app).get("/metrics?format=statsd")
+    assert response.status_code == 400

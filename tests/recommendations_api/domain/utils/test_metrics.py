@@ -12,6 +12,7 @@ from recommendations_api.domain.utils.metrics import (
     MetricsCollector,
     PersistentMetricsCollector,
     Timer,
+    build_datadog_series,
     create_metrics_collector,
 )
 
@@ -79,3 +80,38 @@ def test_create_metrics_collector_with_custom_store() -> None:
     collector.observe(latency_ms=5.0)
     parsed = _parse_metrics(collector.render_prometheus())
     assert parsed["recommendations_api_requests_total"] == 1
+
+
+def test_build_datadog_series_uses_v2_shape() -> None:
+    store = InMemoryMetricsStore()
+    store.record_request(latency_ms=10.0)
+    store.record_request(latency_ms=30.0, is_error=True, is_cold_start=True)
+    series = build_datadog_series(store.load_snapshot(), timestamp=1_700_000_000)
+
+    assert len(series) == 8
+    requests = next(item for item in series if item["metric"].endswith("requests.total"))
+    assert requests == {
+        "metric": "recommendations_api.requests.total",
+        "type": 1,
+        "points": [{"timestamp": 1_700_000_000, "value": 2.0}],
+        "tags": ["service:recommendations_api"],
+    }
+    p95 = next(item for item in series if item["metric"].endswith("latency.p95_ms"))
+    assert p95["type"] == 3
+    assert p95["points"][0]["value"] == round(
+        store.load_snapshot().latency_quantile(95), 2
+    )
+
+
+def test_metrics_collector_render_datadog_and_combined() -> None:
+    collector = create_metrics_collector()
+    collector.observe(latency_ms=12.0)
+
+    datadog = collector.render_datadog()
+    assert "series" in datadog
+    assert datadog["series"][0]["metric"] == "recommendations_api.requests.total"
+
+    combined = collector.render_combined()
+    assert "prometheus" in combined
+    assert "datadog" in combined
+    assert "recommendations_api_requests_total" in combined["prometheus"]
