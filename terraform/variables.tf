@@ -74,3 +74,9 @@ variable "recommendations_api_max_capacity" {
   type        = number
   default     = 20
 }
+
+variable "run_model_predict_on_apply" {
+  description = "When true, trigger a one-off model_predict ECS task after terraform apply."
+  type        = bool
+  default     = true
+}

@@ -61,3 +61,31 @@ resource "aws_ecs_task_definition" "model_predict" {
     Service = "model-predict"
   }
 }
+
+resource "null_resource" "run_model_predict_on_apply" {
+  count = var.run_model_predict_on_apply ? 1 : 0
+
+  triggers = {
+    task_definition_arn = aws_ecs_task_definition.model_predict.arn
+    image_tag           = var.image_tag
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -euo pipefail
+      aws ecs run-task \
+        --region ${var.aws_region} \
+        --cluster ${aws_ecs_cluster.model_predict.name} \
+        --task-definition ${aws_ecs_task_definition.model_predict.arn} \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", data.aws_subnets.default.ids)}],securityGroups=[${aws_security_group.model_predict.id}],assignPublicIp=ENABLED}"
+    EOT
+    interpreter = ["/bin/bash", "-c"]
+  }
+
+  depends_on = [
+    aws_ecs_task_definition.model_predict,
+    aws_ecs_cluster.model_predict,
+    aws_security_group.model_predict,
+  ]
+}

@@ -30,7 +30,7 @@ O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 | **Continuous Training** | ECS `model_train` | Executa o pipeline de treino; gera nova versão do modelo sklearn |
 | **Model Versioning** | SageMaker Model Registry + S3 (`models/`) | Versiona e aprova model packages; armazena artefatos por versão |
 | **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
-| **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB |
+| **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB; disparado via `null_resource` após cada apply |
 | **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3 |
 | **Monitoring** | CloudWatch Logs + `/metrics` (in-memory) | Logs de infraestrutura e aplicação; métricas Prometheus expostas pelo container |
 
@@ -45,8 +45,9 @@ Pipeline de deploy (GitHub → AWS):
 
 ```
 push → CI (pylint + unit tests)
-     → terraform apply
+     → terraform apply (infra)
      → push imagens ECR
+     → trigger model_predict (ECS RunTask via null_resource)
      → integration tests (AWS real)
      → rollback Terraform (se integração falhar)
 ```
@@ -146,9 +147,10 @@ O pipeline GitHub Actions (`workflow.yaml`) executa:
 
 1. **CI** — pylint + pytest unitário (PR e push)
 2. **CD** (somente push, não PR):
-   - `terraform apply`
+   - `terraform apply` (infra, sem disparar predict)
    - push das 3 imagens para ECR
-   - **testes de integração AWS**
+   - **trigger `model_predict`** no ECS via `null_resource` (após imagens disponíveis)
+   - testes de integração AWS
    - rollback automático do Terraform se integração falhar
 
 Secrets necessários no repositório: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`.
@@ -228,7 +230,7 @@ Features são validadas via entidades (`Costumer` / `Customer`) antes de escalar
 4. `recommendation_score` = `popularity_score`; `cold_start_flag: true` na resposta.
 5. Logs registram `cold_start_fallback_selected`.
 
-**Trade-off:** simples, determinístico e explicável. Focamos em garantir que caso o cliente não tenha uma opção personalizada para ele, ele receba indicação do produto mais popular. Porém, se viermos a ter mais informações como época do ano, idade do cliente ou outros itens, podemos futuramente implementar uma tratativa de cold start melhorada.
+**Trade-off:** simples, determinístico e explicável — se não há histórico personalizado, o usuário recebe os produtos mais populares. Com mais contexto (sazonalidade, perfil demográfico, canal), dá para evoluir a estratégia sem mudar o contrato da API.
 
 ---
 
@@ -242,7 +244,7 @@ Features são validadas via entidades (`Costumer` / `Customer`) antes de escalar
 | Custo de inferência concentrado em job agendado | Novos usuários/produtos só aparecem após re-run |
 | Escala horizontal da API sem carregar sklearn | Tabela grande (~30k+ itens) no replace completo |
 
-O Replace completo ocorre aqui, pois os dados são estáticos visto que esse é um case de processo seletivo, em um cenário real, os dados consumidos pelo ECS de predição e os dados registrados no DynamoDB devem ser incrementais.
+O replace completo do DynamoDB é aceitável neste case (dados estáticos). Em produção, predições e writes deveriam ser incrementais.
 
 ### 2. Três apps separadas
 
@@ -250,21 +252,29 @@ Isola responsabilidades e permite escalar/versionar treino, batch e API independ
 
 ### 3. Clean Architecture
 
-Cada app segue `domain/entities`, `domain/usecases`, `domain/gateways`, `main.py`. Facilita testes unitários com mocks nos gateways e testes de integração sem mock nas bordas AWS.
-
-Graças a essa estrutura de software pudemos segregar as regras de negócio dos fatores externos em nossa aplicação.
+Cada app segue `domain/entities`, `domain/usecases`, `domain/gateways`, `main.py`. Isso separa regras de negócio de integrações externas e facilita testes unitários (mocks nos gateways) e de integração (AWS real nas bordas).
 
 ### 4. SageMaker Model Registry
 
-`model_train` registra pacotes aprovados e permite versionamento dos modelos; `model_predict` consome **versão fixa** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`), pois é um requisito do case que usemos o mesmo modelo que foi fornecido no desafio sem retreino (a pipeline de treino é funcional e foi testada, mas não usamos suas versões geradas). Em cenário real, é recomendado que a versão seja mudada dinamicamente, de acordo com o que for configurado como em produção no model registry.
+`model_train` registra pacotes aprovados no SageMaker Model Registry. `model_predict` consome **versão fixa** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`): requisito do case, que usa o modelo fornecido sem retreino (a pipeline de treino funciona e foi testada, mas suas versões geradas não entram em produção aqui). Em produção real, a versão deveria vir do registry conforme promoção de modelo.
 
 ### 5. Métricas in-memory + logs estruturados
 
-Contadores e latências ficam in-memory no processo da API e alimentam `/metrics` via `prometheus_client`. Cada request também emite `api_request_metric` e cada scrape de `/metrics` emite `api_metrics_snapshot` nos logs JSON — recuperáveis depois no CloudWatch Logs Insights.
+Contadores e latências ficam in-memory e alimentam `/metrics` via `prometheus_client`. Cada request emite `api_request_metric`; cada scrape de `/metrics` emite `api_metrics_snapshot` — ambos recuperáveis no CloudWatch Logs Insights.
 
 ### 6. CI/CD com gate de integração
 
-Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR. Falha → rollback do state Terraform. Protege infra/imagem quebrada, mas aumenta tempo de pipeline e exige conta AWS dedicada ao CI.
+Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR. Falha → rollback do state Terraform. Protege infra e imagem quebradas, mas aumenta tempo de pipeline e exige conta AWS dedicada ao CI.
+
+### 7. API síncrona (e caminho assíncrono futuro)
+
+O case exige resposta síncrona; a arquitetura prioriza latência baixa na leitura — batch de inferência + DynamoDB é uma das alavancas principais.
+
+Em escala Itaú, se a inferência passasse a ocorrer em tempo de request, faria sentido evoluir para uma **API assíncrona**:
+
+- **Resposta imediata** com `request_id`, sem bloquear até o fim da inferência; o cliente consulta o resultado depois.
+- **Fila FIFO** absorve picos, serializa processamento e simplifica retries em falhas transientes.
+- **Backpressure explícito** — limitar concorrência na fila torna o scaling mais previsível sob carga máxima.
 
 ---
 
@@ -355,7 +365,7 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 | Hoje | Com mais tempo |
 |------|----------------|
 | Logs JSON em CloudWatch | Correlação com `trace_id` / OpenTelemetry |
-| Métricas Prometheus + DynamoDB | Remote write → AMP/Grafana + dashboards |
+| Métricas Prometheus in-memory + logs estruturados | Remote write → AMP/Grafana + dashboards |
 | Latência p50/p95 no Summary | SLOs + alertas PagerDuty (p95 > X ms, error rate > Y%) |
 | Contador de cold start | Dashboard de % cold start por cohort |
 | — | Tracing distribuído (API → DynamoDB → S3) |
