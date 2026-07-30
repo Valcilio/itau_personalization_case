@@ -1204,14 +1204,12 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 
 1. **Inferência incremental** — scorear só pares novos/alterados em vez de cartesiano completo; ou cache Redis por `(user_id, product_id)`.
 2. **Agendamento gerenciado** — EventBridge + Step Functions para `model_predict` e `model_train` (substituindo triggers acoplados ao deploy na CI; ver [Simplificações do case](#simplificações-do-case-vs-produção-real)).
-3. **Blue/green no deploy da API** — CodeDeploy ou second ECS service antes de trocar tráfego.
-4. **Versionamento de predições** — chave composta `(user_id, product_id, model_version)` no DynamoDB para rollback de modelo sem downtime.
-5. **Endpoint de recomendação real-time opcional** — para usuários VIP ou A/B, com timeout e circuit breaker.
-6. **Otimizar writes DynamoDB** — `batch_writer` com backoff, paralelismo e delete por GSI em vez de scan full table.
-7. **Retreino automatizado com promoção** — o loop drift → train já existe; falta política de promoção da versão servida no Registry após métricas offline.
-8. **Documentação OpenAPI enriquecida** — exemplos de cold start, filtros e códigos de erro no Swagger.
-9. **Monitoramento com Datadog** — hoje a API expõe métricas no formato Datadog (`GET /metrics?format=datadog`), mas sem ingestão real; com mais tempo, integraria agente/sidecar nos tasks ECS, dashboards (latência p95, cold start, error rate), monitors com alertas e encaminhamento de logs CloudWatch para correlação ponta a ponta.
-10. **Ambiente UAT dedicado** — hoje existe uma única stack AWS: branches não-`main` usam tag `UAT` e redeployam a mesma infra que `main`. Com mais tempo, provisionaria um **ambiente UAT separado** (state/workspace Terraform próprio, API Gateway, DynamoDB e buckets isolados), acionado por branch `uat` ou por workflow manual, para validar mudanças de código e infra antes de promover à produção via merge em `main`.
+3. **Versionamento de predições** — chave composta `(user_id, product_id, model_version)` no DynamoDB para rollback de modelo sem downtime.
+4. **Otimizar writes DynamoDB** — `batch_writer` com backoff, paralelismo e delete por GSI em vez de scan full table.
+5. **Retreino automatizado com promoção** — o loop drift → train já existe; falta política de promoção da versão servida no Registry após métricas offline.
+6. **Documentação OpenAPI enriquecida** — exemplos de cold start, filtros e códigos de erro no Swagger.
+7. **Monitoramento com Datadog** — hoje a API expõe métricas no formato Datadog (`GET /metrics?format=datadog`), mas sem ingestão real; com mais tempo, integraria agente/sidecar nos tasks ECS, dashboards (latência p95, cold start, error rate), monitors com alertas e encaminhamento de logs CloudWatch para correlação ponta a ponta.
+8. **Ambiente UAT dedicado** — hoje existe uma única stack AWS: branches não-`main` usam tag `UAT` e redeployam a mesma infra que `main`. Com mais tempo, provisionaria um **ambiente UAT separado** (state/workspace Terraform próprio, API Gateway, DynamoDB e buckets isolados), acionado por branch `uat` ou por workflow manual, para validar mudanças de código e infra antes de promover à produção via merge em `main`.
 
 ---
 
@@ -1308,7 +1306,7 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 - Subscription SNS por e-mail exige confirmação manual após o primeiro `terraform apply`.
 - Rollback do CI reverte **infra Terraform**, não dados escritos nos testes de integração.
 - **`scikit-learn` pinado em 1.8.x** para compatibilidade com artefato existente no S3.
-- **Um único ambiente AWS na CI/CD** — todo `push` (exceto PR) dispara CD completo na mesma stack; branches que não são `main` compartilham a tag de imagem `UAT` e **sobrescrevem o deploy umas das outras**. Não há ambiente UAT isolado para validar mudanças em paralelo antes de promover à produção; ver item 10 em [O que faria diferente com mais tempo](#o-que-faria-diferente-com-mais-tempo).
+- **Um único ambiente AWS na CI/CD** — todo `push` (exceto PR) dispara CD completo na mesma stack; branches que não são `main` compartilham a tag de imagem `UAT` e **sobrescrevem o deploy umas das outras**. Não há ambiente UAT isolado para validar mudanças em paralelo antes de promover à produção; ver item 8 em [O que faria diferente com mais tempo](#o-que-faria-diferente-com-mais-tempo).
 
 ---
 
