@@ -36,14 +36,14 @@ data "aws_iam_policy_document" "ecr_sagemaker_pull" {
 }
 
 resource "aws_ecr_repository_policy" "sagemaker_pull" {
-  for_each   = aws_ecr_repository.services
-  repository = each.value.name
+  for_each   = local.ecr_repositories
+  repository = aws_ecr_repository.services[each.key].name
   policy     = data.aws_iam_policy_document.ecr_sagemaker_pull.json
 }
 
 resource "aws_ecr_lifecycle_policy" "services" {
-  for_each   = aws_ecr_repository.services
-  repository = each.value.name
+  for_each   = local.ecr_repositories
+  repository = aws_ecr_repository.services[each.key].name
 
   policy = jsonencode({
     rules = [

@@ -293,6 +293,7 @@ resource "aws_ssm_parameter" "recommendations_api_key" {
   description = "API Gateway API key for the public recommendations REST API (header x-api-key)."
   type        = "SecureString"
   value       = aws_api_gateway_api_key.recommendations.value
+  overwrite   = true
 
   tags = {
     Project = var.project_name

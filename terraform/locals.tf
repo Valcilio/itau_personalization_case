@@ -13,10 +13,17 @@ locals {
     model_drift_monitor  = "personalization-model-drift-monitor"
   }
 
-  model_train_image_uri           = "${aws_ecr_repository.services["model_train"].repository_url}:${var.image_tag}"
-  model_predict_image_uri         = "${aws_ecr_repository.services["model_predict"].repository_url}:${var.image_tag}"
-  recommendations_api_image_uri   = "${aws_ecr_repository.services["recommendations_api"].repository_url}:${var.image_tag}"
-  model_drift_monitor_image_uri   = "${aws_ecr_repository.services["model_drift_monitor"].repository_url}:${var.image_tag}"
+  ecr_registry = "${local.account_id}.dkr.ecr.${local.region}.amazonaws.com"
+
+  ecr_repository_url = {
+    for key, name in local.ecr_repositories :
+    key => "${local.ecr_registry}/${name}"
+  }
+
+  model_train_image_uri           = "${local.ecr_repository_url.model_train}:${var.image_tag}"
+  model_predict_image_uri         = "${local.ecr_repository_url.model_predict}:${var.image_tag}"
+  recommendations_api_image_uri   = "${local.ecr_repository_url.recommendations_api}:${var.image_tag}"
+  model_drift_monitor_image_uri   = "${local.ecr_repository_url.model_drift_monitor}:${var.image_tag}"
   ecs_subnet_ids                = join(",", data.aws_subnets.default.ids)
 
   model_train_environment = {

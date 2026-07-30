@@ -10,12 +10,12 @@ output "models_bucket_name" {
 
 output "model_train_ecr_repository_url" {
   description = "ECR repository URL for the model_train image."
-  value       = aws_ecr_repository.services["model_train"].repository_url
+  value       = local.ecr_repository_url.model_train
 }
 
 output "model_predict_ecr_repository_url" {
   description = "ECR repository URL for the model_predict image."
-  value       = aws_ecr_repository.services["model_predict"].repository_url
+  value       = local.ecr_repository_url.model_predict
 }
 
 output "model_train_image_uri" {
@@ -115,7 +115,7 @@ output "integration_model_package_group_name" {
 
 output "recommendations_api_ecr_repository_url" {
   description = "ECR repository URL for the recommendations API image."
-  value       = aws_ecr_repository.services["recommendations_api"].repository_url
+  value       = local.ecr_repository_url.recommendations_api
 }
 
 output "recommendations_api_image_uri" {
@@ -195,7 +195,7 @@ output "model_predict_ecs_run_task_command" {
 
 output "model_drift_monitor_ecr_repository_url" {
   description = "ECR repository URL for the model drift monitor image."
-  value       = aws_ecr_repository.services["model_drift_monitor"].repository_url
+  value       = local.ecr_repository_url.model_drift_monitor
 }
 
 output "model_drift_monitor_image_uri" {
