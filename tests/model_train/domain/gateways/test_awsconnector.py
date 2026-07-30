@@ -72,3 +72,17 @@ def test_has_model_packages_returns_false_when_empty(connector: AwsConnector) ->
         "ModelPackageSummaryList": []
     }
     assert connector.has_model_packages("group") is False
+
+
+def test_has_model_package_version_returns_true_when_present(connector: AwsConnector) -> None:
+    connector.sagemaker_client.list_model_packages.return_value = {
+        "ModelPackageSummaryList": [{"ModelPackageVersion": 1}]
+    }
+    assert connector.has_model_package_version("group", 1) is True
+
+
+def test_has_model_package_version_returns_false_when_missing(connector: AwsConnector) -> None:
+    connector.sagemaker_client.list_model_packages.return_value = {
+        "ModelPackageSummaryList": [{"ModelPackageVersion": 2}]
+    }
+    assert connector.has_model_package_version("group", 1) is False

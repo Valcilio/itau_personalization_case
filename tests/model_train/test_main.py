@@ -151,7 +151,7 @@ def test_resolve_baseline_model_dir_uses_repo_model(tmp_path: Path, monkeypatch)
 
 def test_seed_baseline_model_if_needed_skips_when_registry_not_empty() -> None:
     aws = MagicMock()
-    aws.has_model_packages.return_value = True
+    aws.has_model_package_version.return_value = True
     arn = seed_baseline_model_if_needed(
         {
             "model_bucket": "bucket",
@@ -176,7 +176,7 @@ def test_seed_baseline_model_if_needed_registers_case_model(
     (model_dir / "model_card.json").write_text("{}", encoding="utf-8")
 
     aws = MagicMock()
-    aws.has_model_packages.return_value = False
+    aws.has_model_package_version.return_value = False
     aws.upload_model_directory.return_value = "s3://bucket/baseline/model.tar.gz"
     aws.register_model_package.return_value = "arn:baseline"
 

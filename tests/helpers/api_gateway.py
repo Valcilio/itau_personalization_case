@@ -94,6 +94,35 @@ def build_api_client(base_url: str, api_key: str) -> httpx.Client:
     )
 
 
+def wait_for_api_health(
+    base_url: str,
+    api_key: str,
+    *,
+    timeout_seconds: float = 300,
+    poll_interval_seconds: float = 10,
+) -> None:
+    """Poll ``/health`` until the recommendations API is ready or timeout."""
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    last_status: int | str = "unknown"
+    while time.monotonic() < deadline:
+        try:
+            with build_api_client(base_url, api_key) as client:
+                response = client.get("/health")
+                last_status = response.status_code
+                if response.status_code == 200:
+                    return
+        except httpx.HTTPError:
+            last_status = "connection_error"
+        time.sleep(poll_interval_seconds)
+
+    pytest.fail(
+        f"Recommendations API /health did not return 200 within {timeout_seconds}s "
+        f"(last_status={last_status})."
+    )
+
+
 def parse_prometheus_metrics(text: str) -> dict[str, float]:
     """Parse Prometheus text exposition into metric name → value."""
     metrics: dict[str, float] = {}

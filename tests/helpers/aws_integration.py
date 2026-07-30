@@ -167,3 +167,81 @@ def dynamodb_table_has_items(table_name: str) -> bool:
     client = boto3.client("dynamodb")
     response = client.scan(TableName=table_name, Limit=1)
     return bool(response.get("Items"))
+
+
+def production_baseline_seed_config(outputs: dict[str, str]) -> dict[str, str]:
+    """Minimal config for registering the case baseline as model package v1."""
+    image_tag = outputs.get("model_train_image_uri", "").rsplit(":", maxsplit=1)[-1]
+    if not image_tag:
+        image_tag = "UAT"
+    return {
+        "model_bucket": require_terraform_output(outputs, "models_bucket_name"),
+        "inference_image_uri": require_terraform_output(outputs, "model_train_image_uri"),
+        "model_package_group_name": require_terraform_output(
+            outputs,
+            "model_package_group_name",
+        ),
+        "model_output_dir": "/tmp/integration-baseline-seed",
+        "baseline_model_dir": "",
+        "baseline_model_prefix": "models/purchase_propensity/case-baseline-v1",
+        "IMAGE_TAG": image_tag,
+    }
+
+
+def ensure_production_model_package_v1(outputs: dict[str, str]) -> None:
+    """Register the bundled baseline model as version 1 when it is missing."""
+    from model_train.domain.gateways.awsconnector import AwsConnector
+    from model_train.main import seed_baseline_model_if_needed
+
+    config = production_baseline_seed_config(outputs)
+    aws_connector = AwsConnector()
+    if aws_connector.has_model_package_version(config["model_package_group_name"], 1):
+        return
+
+    with temporary_env({"IMAGE_TAG": config["IMAGE_TAG"]}):
+        seed_baseline_model_if_needed(config, aws_connector)
+
+
+def production_model_predict_env(outputs: dict[str, str]) -> dict[str, str]:
+    """Environment for populating the production predictions DynamoDB table."""
+    return {
+        "AWS_REGION": os.getenv("AWS_REGION", "us-east-1"),
+        "DATA_BUCKET": require_terraform_output(outputs, "data_bucket_name"),
+        "DATA_PREFIX": os.getenv("DATA_PREFIX", "training-data"),
+        "PREDICTIONS_BUCKET": require_terraform_output(outputs, "data_bucket_name"),
+        "PREDICTIONS_PREFIX": outputs.get("predictions_prefix", "predictions"),
+        "PREDICTIONS_DYNAMODB_TABLE": require_terraform_output(
+            outputs,
+            "predictions_dynamodb_table_name",
+        ),
+        "MODEL_PACKAGE_GROUP_NAME": require_terraform_output(
+            outputs,
+            "model_package_group_name",
+        ),
+        "LOCAL_DATA_DIR": "/tmp/production-predict-data",
+        "LOCAL_MODEL_DIR": "/tmp/production-predict-model",
+        "LOCAL_OUTPUT_DIR": "/tmp/production-predict-output",
+        "DRIFT_MONITOR_ENABLED": "false",
+        "LOG_LEVEL": "INFO",
+    }
+
+
+def ensure_production_predictions(outputs: dict[str, str]) -> str:
+    """Seed model package v1 and populate the production predictions table if needed."""
+    from model_predict.main import run_prediction_pipeline
+
+    table_name = require_terraform_output(outputs, "predictions_dynamodb_table_name")
+    ensure_production_model_package_v1(outputs)
+
+    if dynamodb_table_has_items(table_name):
+        return table_name
+
+    with temporary_env(production_model_predict_env(outputs)):
+        result = run_prediction_pipeline()
+
+    if not dynamodb_table_has_items(table_name):
+        raise RuntimeError(
+            f"Production predictions table '{table_name}' is still empty after "
+            f"model_predict ({result.prediction_rows} rows written)."
+        )
+    return table_name

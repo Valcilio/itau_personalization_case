@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers.aws_integration import (
+    ensure_production_model_package_v1,
     has_aws_credentials,
     integration_run_id as build_integration_run_id,
     load_terraform_outputs,
@@ -30,3 +31,9 @@ def _aws_available() -> None:
 def integration_run_id() -> str:
     """Unique id used to isolate integration artifacts in AWS."""
     return build_integration_run_id()
+
+
+@pytest.fixture(scope="session")
+def production_model_registry_ready(terraform_outputs) -> None:
+    """Ensure model package version 1 exists before model_predict integration tests."""
+    ensure_production_model_package_v1(terraform_outputs)

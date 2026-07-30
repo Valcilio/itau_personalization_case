@@ -17,6 +17,7 @@ from tests.helpers.aws_integration import (
 pytestmark = [pytest.mark.integration, pytest.mark.order(2)]
 
 
+@pytest.mark.usefixtures("production_model_registry_ready")
 def test_run_prediction_pipeline_against_aws(terraform_outputs, integration_run_id) -> None:
     """Run the full prediction pipeline using real S3, SageMaker and DynamoDB."""
     env = model_predict_env(terraform_outputs, integration_run_id)

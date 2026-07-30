@@ -199,10 +199,13 @@ def seed_baseline_model_if_needed(
         )
         return None
 
-    if aws_connector.has_model_packages(config["model_package_group_name"]):
+    if aws_connector.has_model_package_version(
+        config["model_package_group_name"],
+        model_package_version=1,
+    ):
         logger.info(
             "baseline_model_seed_skipped",
-            reason="model_registry_not_empty",
+            reason="model_package_version_1_exists",
             model_package_group_name=config["model_package_group_name"],
         )
         return None
