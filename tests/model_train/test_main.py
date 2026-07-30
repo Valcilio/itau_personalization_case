@@ -8,6 +8,7 @@ import pytest
 
 from model_train.main import (
     PipelineResult,
+    TrainingMetrics,
     load_config,
     load_datasets,
     main,
@@ -96,8 +97,7 @@ def test_main_returns_zero(mock_run, _mock_configure) -> None:
         model_s3_uri="s3://x",
         model_package_arn="arn",
         baseline_model_package_arn=None,
-        accuracy="0.9",
-        roc_auc="0.8",
+        metrics=TrainingMetrics(accuracy="0.9", roc_auc="0.8"),
         validated_customers=1,
     )
     assert main() == 0

@@ -16,6 +16,14 @@ from model_train.domain.utils.modeltrainerlogger import ModelTrainerLogger
 
 
 @dataclass(frozen=True)
+class TrainingMetrics:
+    """Offline evaluation metrics produced during training."""
+
+    accuracy: str
+    roc_auc: str
+
+
+@dataclass(frozen=True)
 class PipelineResult:
     """Summary returned after a full training pipeline execution."""
 
@@ -24,9 +32,16 @@ class PipelineResult:
     model_s3_uri: str
     model_package_arn: str
     baseline_model_package_arn: str | None
-    accuracy: str
-    roc_auc: str
+    metrics: TrainingMetrics
     validated_customers: int
+
+
+def pipeline_result_to_dict(result: PipelineResult) -> dict[str, object]:
+    """Serialize a pipeline result with flat metric fields for JSON output."""
+    payload = asdict(result)
+    metrics = payload.pop("metrics")
+    payload.update(metrics)
+    return payload
 
 
 logger = ModelTrainerLogger("main")
@@ -328,8 +343,10 @@ def run_training_pipeline() -> PipelineResult:
         model_s3_uri=model_s3_uri,
         model_package_arn=model_package_arn,
         baseline_model_package_arn=baseline_model_package_arn,
-        accuracy=str(training_result.metrics["accuracy"]),
-        roc_auc=str(training_result.metrics["roc_auc"]),
+        metrics=TrainingMetrics(
+            accuracy=str(training_result.metrics["accuracy"]),
+            roc_auc=str(training_result.metrics["roc_auc"]),
+        ),
         validated_customers=training_result.validated_customers,
     )
     logger.info(
@@ -338,8 +355,8 @@ def run_training_pipeline() -> PipelineResult:
         model_s3_uri=result.model_s3_uri,
         model_package_arn=result.model_package_arn,
         baseline_model_package_arn=result.baseline_model_package_arn,
-        accuracy=result.accuracy,
-        roc_auc=result.roc_auc,
+        accuracy=result.metrics.accuracy,
+        roc_auc=result.metrics.roc_auc,
         validated_customers=result.validated_customers,
     )
     return result
@@ -355,7 +372,7 @@ def main() -> int:
         logger.exception("training_pipeline_failed")
         return 1
 
-    print(json.dumps(asdict(result), ensure_ascii=False))
+    print(json.dumps(pipeline_result_to_dict(result), ensure_ascii=False))
     return 0
 
 

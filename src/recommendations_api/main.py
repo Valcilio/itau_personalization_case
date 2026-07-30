@@ -73,8 +73,9 @@ def health() -> dict[str, str]:
 
 @app.get("/metrics")
 def get_metrics(
-    format: str = Query(
+    metrics_format: str = Query(
         default="prometheus",
+        alias="format",
         description=(
             "Output format: prometheus (default), datadog (Metrics API v2 series), "
             "or both (JSON with prometheus text + datadog series)."
@@ -85,7 +86,7 @@ def get_metrics(
     collector = get_metrics_collector()
     collector.log_snapshot(source="metrics_endpoint")
 
-    normalized = format.strip().lower()
+    normalized = metrics_format.strip().lower()
     if normalized == "datadog":
         return JSONResponse(content=collector.render_datadog())
     if normalized == "both":
