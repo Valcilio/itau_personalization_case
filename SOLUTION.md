@@ -258,6 +258,8 @@ Use credenciais de um **usuário IAM dedicado à CI** (não root). As mesmas per
 
 **Tags de imagem:** `main` → `v0.1.{run_number}` (+ git tag); demais branches → `UAT`.
 
+> **Limitação:** todas as branches (exceto PR) fazem CD na **mesma stack AWS** e branches não-`main` compartilham a tag `UAT` — pushes concorrentes se sobrescrevem. Ver [Limitações conhecidas](#limitações-conhecidas).
+
 ---
 
 ### A.3 Disparar o deploy
@@ -574,6 +576,8 @@ O job de tag/release precisa `contents: write` para criar git tags em `main`.
 |--------|-------------|---------|
 | `main` | `v0.1.{run_number}` | criada automaticamente |
 | demais | `UAT` | não cria tag |
+
+Todas as branches com CD apontam para a **mesma infraestrutura**; não há stack UAT isolada. Branches de feature disputam a tag `UAT` e o último push prevalece — adequado para o case, insuficiente para validação paralela de mudanças antes de produção.
 
 Em `main`, também publica `:latest` nos quatro repositórios ECR (`push_latest: true`).
 
@@ -1206,6 +1210,8 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 6. **Otimizar writes DynamoDB** — `batch_writer` com backoff, paralelismo e delete por GSI em vez de scan full table.
 7. **Retreino automatizado com promoção** — o loop drift → train já existe; falta política de promoção da versão servida no Registry após métricas offline.
 8. **Documentação OpenAPI enriquecida** — exemplos de cold start, filtros e códigos de erro no Swagger.
+9. **Monitoramento com Datadog** — hoje a API expõe métricas no formato Datadog (`GET /metrics?format=datadog`), mas sem ingestão real; com mais tempo, integraria agente/sidecar nos tasks ECS, dashboards (latência p95, cold start, error rate), monitors com alertas e encaminhamento de logs CloudWatch para correlação ponta a ponta.
+10. **Ambiente UAT dedicado** — hoje existe uma única stack AWS: branches não-`main` usam tag `UAT` e redeployam a mesma infra que `main`. Com mais tempo, provisionaria um **ambiente UAT separado** (state/workspace Terraform próprio, API Gateway, DynamoDB e buckets isolados), acionado por branch `uat` ou por workflow manual, para validar mudanças de código e infra antes de promover à produção via merge em `main`.
 
 ---
 
@@ -1215,6 +1221,7 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 |------|----------------|
 | Logs JSON em CloudWatch | Correlação com `trace_id` / OpenTelemetry |
 | Métricas Prometheus in-memory + logs estruturados | Remote write → AMP/Grafana + dashboards |
+| Export Datadog em `/metrics?format=datadog` (sem ingestão) | **Datadog** end-to-end: agent, dashboards, monitors e log forwarding |
 | Latência p50/p95 no Summary | SLOs + alertas PagerDuty (p95 > X ms, error rate > Y%) |
 | Contador de cold start | Dashboard de % cold start por cohort |
 | — | Tracing distribuído (API → DynamoDB → S3) |
@@ -1300,7 +1307,8 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 - Drift monitor e retreino automático não têm teste de integração end-to-end na CI (unitários + disparo desabilitado em integração).
 - Subscription SNS por e-mail exige confirmação manual após o primeiro `terraform apply`.
 - Rollback do CI reverte **infra Terraform**, não dados escritos nos testes de integração.
-- `scikit-learn` pinado em 1.8.x para compatibilidade com artefato existente no S3.
+- **`scikit-learn` pinado em 1.8.x** para compatibilidade com artefato existente no S3.
+- **Um único ambiente AWS na CI/CD** — todo `push` (exceto PR) dispara CD completo na mesma stack; branches que não são `main` compartilham a tag de imagem `UAT` e **sobrescrevem o deploy umas das outras**. Não há ambiente UAT isolado para validar mudanças em paralelo antes de promover à produção; ver item 10 em [O que faria diferente com mais tempo](#o-que-faria-diferente-com-mais-tempo).
 
 ---
 
