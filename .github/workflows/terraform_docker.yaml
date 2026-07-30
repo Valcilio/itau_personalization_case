@@ -77,10 +77,10 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="run_model_predict_on_apply=false" -var="run_model_train_on_apply=false"
+        run: terraform plan -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="run_model_predict_on_apply=false" -var="run_model_train_on_apply=false" -var="run_model_drift_monitor_on_apply=false"
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="run_model_predict_on_apply=false" -var="run_model_train_on_apply=false"
+        run: terraform apply -auto-approve -input=false -var="image_tag=${{ inputs.image_tag }}" -var="aws_region=${{ secrets.AWS_REGION }}" -var="run_model_predict_on_apply=false" -var="run_model_train_on_apply=false" -var="run_model_drift_monitor_on_apply=false"
 
   push-model-train-image:
     name: Push model-train Image to ECR
@@ -231,6 +231,55 @@ jobs:
           cache-from: type=gha,scope=recommendations-api
           cache-to: type=gha,mode=max,scope=recommendations-api
 
+  push-model-drift-monitor-image:
+    name: Push model-drift-monitor Image to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set Docker push tags
+        id: docker-tags
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          TAGS="${REGISTRY}/personalization-model-drift-monitor:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${REGISTRY}/personalization-model-drift-monitor:latest"
+          fi
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push model-drift-monitor
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/model_drift_monitor/Dockerfile
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=model-drift-monitor
+          cache-to: type=gha,mode=max,scope=model-drift-monitor
+
   integration-tests:
     name: AWS Integration Tests
     needs:
@@ -238,6 +287,7 @@ jobs:
       - push-model-train-image
       - push-model-predict-image
       - push-recommendations-api-image
+      - push-model-drift-monitor-image
     uses: ./.github/workflows/integration_tests.yaml
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -252,6 +302,7 @@ jobs:
       - push-model-train-image
       - push-model-predict-image
       - push-recommendations-api-image
+      - push-model-drift-monitor-image
       - integration-tests
     defaults:
       run:
@@ -294,6 +345,7 @@ jobs:
       - push-model-train-image
       - push-model-predict-image
       - push-recommendations-api-image
+      - push-model-drift-monitor-image
       - integration-tests
       - trigger-model-train
     defaults:
@@ -330,6 +382,7 @@ jobs:
             -var="aws_region=${{ secrets.AWS_REGION }}" \
             -var="run_model_predict_on_apply=true" \
             -var="run_model_train_on_apply=false" \
+            -var="run_model_drift_monitor_on_apply=false" \
             -target=null_resource.run_model_predict_on_apply
 
   rollback-terraform:
@@ -378,4 +431,5 @@ jobs:
             -var="image_tag=${{ needs.deploy-terraform.outputs.rollback_image_tag }}" \
             -var="aws_region=${{ secrets.AWS_REGION }}" \
             -var="run_model_predict_on_apply=false" \
-            -var="run_model_train_on_apply=false"
+            -var="run_model_train_on_apply=false" \
+            -var="run_model_drift_monitor_on_apply=false"

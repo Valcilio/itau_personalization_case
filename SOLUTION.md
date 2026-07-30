@@ -523,6 +523,48 @@ Implementação em `model_predict/domain/usecases/featureengineer.py` (espelhada
 
 Features são validadas via entidades (`Costumer` / `Customer`) antes de escalar e inferir. O scaler e o modelo consomem matrizes **numpy** (sem nomes de colunas) para compatibilidade com o artefato original (`scikit-learn>=1.8.0,<1.9.0`).
 
+> **Treino vs predição:** no `model_predict`, o universo de pares é o **produto cartesiano** usuários×produtos (~30k linhas). No `model_train`, o dataset supervisionado usa apenas pares `(user_id, product_id)` que **já aparecem** em `events.csv` — ver [Target de treino](#target-de-treino-model_train).
+
+---
+
+## Target de treino (`model_train`)
+
+O retreino em `model_train` aprende **propensão de compra**: para cada par usuário–produto com histórico, o modelo estima a probabilidade de que houve (ou haveria) uma **compra** naquele par.
+
+Implementação em `src/model_train/domain/gateways/modelhandler.py` (`build_training_dataset()` + `_build_labels()`).
+
+### Definição da target (label)
+
+| Valor | Significado |
+|-------|-------------|
+| **`1`** | Existe pelo menos um evento `event_type == "purchase"` para `(user_id, product_id)` |
+| **`0`** | O par aparece em `events.csv` (view, click, add_to_cart, etc.), mas **sem** `purchase` |
+
+Eventos que **não** são `purchase` entram nas **features** (ex.: `interactions` conta todos os eventos do par), mas **não** definem label positiva.
+
+### Universo de exemplos
+
+1. Extrair pares únicos: `events[["user_id", "product_id"]].drop_duplicates()`.
+2. Derivar features com `_build_features()` (mesma lógica de `interactions`, `price`, `user_affinity_match`, etc.).
+3. Derivar labels com `_build_labels()`: merge left com pares que tiveram `purchase`; `fillna(0)`.
+
+Pares usuário–produto **sem nenhuma interação** no CSV **não** entram no treino (diferente do batch de inferência, que scoreia o cartesiano completo).
+
+### Treino e métricas offline
+
+`ModelTrainer.train()` (`src/model_train/domain/usecases/modeltrainer.py`):
+
+- Valida features via entidade `Customer`.
+- Split **80/20** estratificado (`stratify=labels`, `random_state=42`).
+- `StandardScaler` + `LogisticRegression(max_iter=1000)`.
+- Métricas no hold-out: **accuracy** e **ROC-AUC** (probabilidade da classe positiva = compra).
+
+A saída do modelo treinado é a mesma do case: **probabilidade de compra** entre 0 e 1, usada downstream como `recommendation_score`.
+
+### Alinhamento com o case
+
+O `model/model_card.json` descreve propensão de compra e observa que pequenas variações de critério (ex.: ponderar recência, usar só purchases na afinidade) seriam aceitáveis se documentadas. **Escolha adotada:** label binária estrita — **`purchase` = 1**, demais interações do mesmo par = **0**, sobre pares que já existem no histórico de eventos.
+
 ---
 
 ## SageMaker Model Registry e seed do modelo baseline

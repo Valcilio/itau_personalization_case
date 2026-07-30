@@ -27,6 +27,18 @@ variable "predictions_prefix" {
   default     = "predictions"
 }
 
+variable "monitoring_prefix" {
+  description = "S3 prefix where model_drift_monitor writes performance reports."
+  type        = string
+  default     = "model-performance"
+}
+
+variable "drift_alert_email" {
+  description = "Email address subscribed to model drift SNS alerts."
+  type        = string
+  default     = "eugeniovalcilio@gmail.com"
+}
+
 variable "ecs_task_cpu" {
   description = "CPU units for the ECS Fargate tasks (4096 = 4 vCPU)."
   type        = string
@@ -85,4 +97,10 @@ variable "run_model_train_on_apply" {
   description = "When true, trigger a one-off model_train ECS task after terraform apply."
   type        = bool
   default     = true
+}
+
+variable "run_model_drift_monitor_on_apply" {
+  description = "When true, trigger a one-off model_drift_monitor ECS task after terraform apply."
+  type        = bool
+  default     = false
 }

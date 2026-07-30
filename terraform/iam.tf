@@ -56,6 +56,59 @@ data "aws_iam_policy_document" "ecs_task" {
       "${aws_cloudwatch_log_group.model_predict.arn}:*",
       aws_cloudwatch_log_group.recommendations_api.arn,
       "${aws_cloudwatch_log_group.recommendations_api.arn}:*",
+      aws_cloudwatch_log_group.model_drift_monitor.arn,
+      "${aws_cloudwatch_log_group.model_drift_monitor.arn}:*",
+    ]
+  }
+
+  statement {
+    sid = "EcsRunTask"
+    actions = [
+      "ecs:RunTask",
+    ]
+    resources = [
+      aws_ecs_task_definition.model_train.arn_without_revision,
+      aws_ecs_task_definition.model_predict.arn_without_revision,
+      aws_ecs_task_definition.model_drift_monitor.arn_without_revision,
+      aws_ecs_cluster.model_train.arn,
+      aws_ecs_cluster.model_predict.arn,
+      aws_ecs_cluster.model_drift_monitor.arn,
+    ]
+  }
+
+  statement {
+    sid = "EcsRunTaskPassRole"
+    actions = [
+      "iam:PassRole",
+    ]
+    resources = [
+      aws_iam_role.ecs_task_execution.arn,
+      aws_iam_role.ecs_task.arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid = "EcsDescribeTasks"
+    actions = [
+      "ecs:DescribeTasks",
+      "ecs:DescribeTaskDefinition",
+      "ecs:DescribeClusters",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "SnsDriftAlerts"
+    actions = [
+      "sns:Publish",
+    ]
+    resources = [
+      aws_sns_topic.model_drift_alerts.arn,
     ]
   }
 

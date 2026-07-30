@@ -192,3 +192,50 @@ output "model_predict_ecs_run_task_command" {
     aws_security_group.model_predict.id,
   )
 }
+
+output "model_drift_monitor_ecr_repository_url" {
+  description = "ECR repository URL for the model drift monitor image."
+  value       = aws_ecr_repository.services["model_drift_monitor"].repository_url
+}
+
+output "model_drift_monitor_image_uri" {
+  description = "Full Docker image URI used by the ECS drift monitor task."
+  value       = local.model_drift_monitor_image_uri
+}
+
+output "model_drift_monitor_ecs_cluster_name" {
+  description = "ECS cluster responsible for running model_drift_monitor."
+  value       = aws_ecs_cluster.model_drift_monitor.name
+}
+
+output "model_drift_monitor_ecs_task_definition_arn" {
+  description = "ECS task definition used to run model_drift_monitor."
+  value       = aws_ecs_task_definition.model_drift_monitor.arn
+}
+
+output "model_drift_monitor_log_group" {
+  description = "CloudWatch log group used by the model_drift_monitor container."
+  value       = aws_cloudwatch_log_group.model_drift_monitor.name
+}
+
+output "monitoring_prefix" {
+  description = "S3 prefix where model_drift_monitor writes performance reports."
+  value       = var.monitoring_prefix
+}
+
+output "model_drift_sns_topic_arn" {
+  description = "SNS topic used for model drift and retrain notifications."
+  value       = aws_sns_topic.model_drift_alerts.arn
+}
+
+output "model_drift_monitor_ecs_run_task_command" {
+  description = "Command to run a one-off model_drift_monitor batch task."
+  value = format(
+    "aws ecs run-task --region %s --cluster %s --task-definition %s --launch-type FARGATE --network-configuration \"awsvpcConfiguration={subnets=[%s],securityGroups=[%s],assignPublicIp=ENABLED}\"",
+    var.aws_region,
+    aws_ecs_cluster.model_drift_monitor.name,
+    aws_ecs_task_definition.model_drift_monitor.family,
+    join(",", data.aws_subnets.default.ids),
+    aws_security_group.model_drift_monitor.id,
+  )
+}

@@ -27,3 +27,13 @@ resource "aws_cloudwatch_log_group" "recommendations_api" {
     Service = "recommendations-api"
   }
 }
+
+resource "aws_cloudwatch_log_group" "model_drift_monitor" {
+  name              = "/ecs/${var.project_name}/model-drift-monitor"
+  retention_in_days = 30
+
+  tags = {
+    Project = var.project_name
+    Service = "model-drift-monitor"
+  }
+}

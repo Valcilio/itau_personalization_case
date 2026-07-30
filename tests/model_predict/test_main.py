@@ -134,6 +134,11 @@ def test_run_prediction_pipeline_returns_summary(
         "local_data_dir": "/tmp/data",
         "local_model_dir": "/tmp/model",
         "local_output_dir": "/tmp/out",
+        "drift_monitor_enabled": True,
+        "drift_monitor_cluster": "drift-cluster",
+        "drift_monitor_task_definition": "drift-task",
+        "drift_monitor_subnets": "subnet-1",
+        "drift_monitor_security_group": "sg-1",
     }
     mock_load_datasets.return_value = (pd.DataFrame(), pd.DataFrame())
     connector = mock_connector_cls.return_value
@@ -172,3 +177,4 @@ def test_run_prediction_pipeline_returns_summary(
     result = run_prediction_pipeline()
     assert result.prediction_rows == 2
     connector.replace_predictions_table.assert_called_once()
+    connector.trigger_drift_monitor_task.assert_called_once()

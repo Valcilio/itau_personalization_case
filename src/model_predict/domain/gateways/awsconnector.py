@@ -34,6 +34,7 @@ class AwsConnector:
         self.sagemaker_client = boto3.client("sagemaker", region_name=self.region_name)
         self.dynamodb_client = boto3.client("dynamodb", region_name=self.region_name)
         self.dynamodb_resource = boto3.resource("dynamodb", region_name=self.region_name)
+        self.ecs_client = boto3.client("ecs", region_name=self.region_name)
         self.logger = ModelRunnerLogger(self.__class__.__name__)
         self.logger.info("aws_connector_initialized", region=self.region_name)
 
@@ -396,3 +397,72 @@ class AwsConnector:
             stored_rows=stored_rows,
         )
         return len(predictions)
+
+    def trigger_drift_monitor_task(
+        self,
+        *,
+        predictions_s3_uri: str,
+        predictions_filename: str,
+        cluster: str,
+        task_definition: str,
+        subnets: str,
+        security_groups: str,
+    ) -> dict | None:
+        """Launch the drift monitor ECS task after predictions are persisted.
+
+        Returns:
+            ECS task payload when triggered, or ``None`` when configuration is missing.
+        """
+        if not cluster or not task_definition or not subnets or not security_groups:
+            self.logger.warning(
+                "drift_monitor_trigger_skipped",
+                reason="missing_ecs_configuration",
+            )
+            return None
+
+        subnet_list = [subnet.strip() for subnet in subnets.split(",") if subnet.strip()]
+        security_group_list = [
+            security_group.strip()
+            for security_group in security_groups.split(",")
+            if security_group.strip()
+        ]
+
+        self.logger.info(
+            "drift_monitor_run_task_started",
+            cluster=cluster,
+            task_definition=task_definition,
+            predictions_s3_uri=predictions_s3_uri,
+        )
+        response = self.ecs_client.run_task(
+            cluster=cluster,
+            taskDefinition=task_definition,
+            launchType="FARGATE",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": subnet_list,
+                    "securityGroups": security_group_list,
+                    "assignPublicIp": "ENABLED",
+                }
+            },
+            overrides={
+                "containerOverrides": [
+                    {
+                        "name": "model-drift-monitor",
+                        "environment": [
+                            {"name": "PREDICTIONS_S3_URI", "value": predictions_s3_uri},
+                            {"name": "PREDICTIONS_FILENAME", "value": predictions_filename},
+                        ],
+                    }
+                ]
+            },
+        )
+        failures = response.get("failures", [])
+        if failures:
+            raise RuntimeError(f"Failed to start drift monitor task: {failures}")
+
+        task = response.get("tasks", [{}])[0]
+        self.logger.info(
+            "drift_monitor_run_task_completed",
+            task_arn=task.get("taskArn", ""),
+        )
+        return task

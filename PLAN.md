@@ -24,6 +24,7 @@ Já dentro da AWS vamos ter o seguinte:
     - Um API Gateway REST para servir nossa API com API keys nativas (usage plan);
     - Um VPC Link conectando o API Gateway ao NLB interno, que encaminha para o ALB e o ECS da API. Rotas: /health (GET), /recommendation(s)/{user_id} (GET), /metrics (GET) e /recommendation(s)_filtered (POST);
     - Por fim teremos nossos logs sendo registrados no cloudwatch e uma pasta no bucket que tem as predições salvas para salvar os dados de métricas e outputs consumidos com timestamps e requests ids.
+    - model drift monitor: teremos um quarto APP mais simples que irá: pegar as predições do S3 e os valores reais considerando como a resposta quem teve purchase=1 e considerando a predição como 1 se a probabilidade for maior do que 50%, para poder calcular o precision e recall, essa aplicação poderá chamar o job de treinamento para gerar uma nova versão do modelo, caso o PRECSION ou o RECALL estejam abaixo de 50%.
 
 # MODEL PREDICT
 
@@ -123,3 +124,30 @@ Fora que é um serviço online e não batch como os outros dois casos.
 OBS1: Importante lembrar que os dados recuperados daqui devem vir da tabela de predições do DynamoDB que criamos anteriormente.
 OBS2: Outro ponto importante é que a API deve poder ser acessada de qualquer lugar da internet sem limitação de IP, porém deve requerir uma API Key ou algum outro método de autenticação.
 OBS3: Lembre que para lidar com cold_start cases, nós iremos substituir o recommendation score pelo popularity score e também precisamos sempre devolver o cold_start_flag indicando se o usuário é cold_start ou não.
+
+# Model Drift Monitor
+
+Teremos um quarto APP mais simples que irá: pegar as predições do S3 e os valores reais considerando como a resposta quem teve purchase=1 e considerando a predição como 1 se a probabilidade for maior do que 50%, para poder calcular o precision e recall, essa aplicação poderá chamar o job de treinamento para gerar uma nova versão do modelo, caso o PRECSION ou o RECALL estejam abaixo de 50%. Também precisaremos implementar métricas para medir o datadrift, uma boa é checar a mediana dos dados de treinamento versus a mediana dos dados de predição e ver se estão com uma diferença de até 50%, outro ponto que podemos usar é PSI e também Kolmogorov Smirnov.
+
+O resultado desse monitoramento com as métricas deve ser sempre salvo de forma incremental no mesmo bucket S3 que são salvas as predições e com o mesmo hash (model_performance_hash_timestamp.parquet), mas em outra pasta.
+
+    Entties:
+        model.py: valida se o dados de predição do modelo estão no formato esperado.
+    
+    Use Cases:
+        precisioncalculator.py: calcula a precisão;
+        recallcalculator.py: calcula o recall;
+        datadriftchecker.py: checa se o padrão dos dados usados na predição, é semelhante aos de quando foram usados no
+        treinamento do modelo;
+        calltrainpipeline.py: em caso de drift em um dos dois, vai chamar a pipeline de treinamento. Receberá o client da AWS
+        como atributo.
+
+    Gateways:
+        awsconnector.py: cuida de toda a parte da conexão com a AWS;
+        metricshandler.py: vai gerenciar as classes da camada de Use Cases.
+
+    main.py: entrypoint que irá usar o que temos em gateways para gerir toda a função da aplicação.
+
+OBS: Esse model drift monitor deve rodar sempre após o model predict acabar, então adicione um trigger no model predict para ele.
+OBS2: Precisaremos de algum serviço na AWS para nos notificar sempre que ocorrer um retreino de modelo, integre com o SNS e cadastre meu e-mail (eugeniovalcilio@gmail.com) lá, se tivermos o drift propriamente dito, precisaremos ser notificados.
+OBS3: Essa aplicação vai rodar em um cluster ECS do mesmo jeito que rodam o model predict e o model train.

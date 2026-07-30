@@ -78,6 +78,18 @@ def load_config() -> dict[str, str]:
         "local_data_dir": os.getenv("LOCAL_DATA_DIR", "/tmp/prediction-data"),
         "local_model_dir": os.getenv("LOCAL_MODEL_DIR", "/tmp/prediction-model"),
         "local_output_dir": os.getenv("LOCAL_OUTPUT_DIR", "/tmp/prediction-output"),
+        "drift_monitor_enabled": os.getenv("DRIFT_MONITOR_ENABLED", "true").lower()
+        in {"1", "true", "yes"},
+        "drift_monitor_cluster": os.getenv("DRIFT_MONITOR_CLUSTER", "").strip(),
+        "drift_monitor_task_definition": os.getenv(
+            "DRIFT_MONITOR_TASK_DEFINITION",
+            "",
+        ).strip(),
+        "drift_monitor_subnets": os.getenv("DRIFT_MONITOR_SUBNETS", "").strip(),
+        "drift_monitor_security_group": os.getenv(
+            "DRIFT_MONITOR_SECURITY_GROUP",
+            "",
+        ).strip(),
     }
 
 
@@ -236,6 +248,16 @@ def run_prediction_pipeline() -> PipelineResult:
         table_name=config["predictions_dynamodb_table"],
         predictions=predictions,
     )
+
+    if config["drift_monitor_enabled"]:
+        aws_connector.trigger_drift_monitor_task(
+            predictions_s3_uri=predictions_s3_uri,
+            predictions_filename=config["predictions_filename"],
+            cluster=config["drift_monitor_cluster"],
+            task_definition=config["drift_monitor_task_definition"],
+            subnets=config["drift_monitor_subnets"],
+            security_groups=config["drift_monitor_security_group"],
+        )
 
     result = PipelineResult(
         model_package_group_name=config["model_package_group_name"],
