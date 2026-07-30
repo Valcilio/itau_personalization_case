@@ -26,7 +26,7 @@ O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 
 | Camada | Componentes | Responsabilidade |
 |--------|-------------|------------------|
-| **Code Versioning** | GitHub (repo + Actions CI/CD) | CI: `pytest` + `pylint`, tag de versão e build da imagem Docker. CD: `terraform apply`, testes de integração AWS, push para ECR e rollback se falhar |
+| **Code Versioning** | GitHub (repo + Actions CI/CD) | CI: `pytest` + `pylint`, tag de versão e build da imagem Docker. CD: `terraform apply`, push para ECR, testes de integração AWS e rollback se falhar |
 | **Continuous Training** | ECS `model_train` | Executa o pipeline de treino; gera nova versão do modelo sklearn |
 | **Model Versioning** | SageMaker Model Registry + S3 (`models/`) | Versiona e aprova model packages; armazena artefatos por versão |
 | **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
@@ -46,8 +46,8 @@ Pipeline de deploy (GitHub → AWS):
 ```
 push → CI (pylint + unit tests)
      → terraform apply
+     → push imagens ECR
      → integration tests (AWS real)
-     → push imagens ECR (somente se testes passarem)
      → rollback Terraform (se integração falhar)
 ```
 
@@ -147,8 +147,8 @@ O pipeline GitHub Actions (`workflow.yaml`) executa:
 1. **CI** — pylint + pytest unitário (PR e push)
 2. **CD** (somente push, não PR):
    - `terraform apply`
+   - push das 3 imagens para ECR
    - **testes de integração AWS**
-   - push das 3 imagens para ECR (somente se testes passarem)
    - rollback automático do Terraform se integração falhar
 
 Secrets necessários no repositório: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`.
@@ -264,7 +264,7 @@ Contadores e latências ficam in-memory no processo da API e alimentam `/metrics
 
 ### 6. CI/CD com gate de integração
 
-Testes AWS rodam **após** `terraform apply` e **antes** do push de imagens. Falha → rollback do state Terraform. Protege infra quebrada, mas aumenta tempo de pipeline e exige conta AWS dedicada ao CI.
+Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR. Falha → rollback do state Terraform. Protege infra/imagem quebrada, mas aumenta tempo de pipeline e exige conta AWS dedicada ao CI.
 
 ---
 
@@ -377,7 +377,7 @@ tests/                     # unitários (espelham src/)
 tests/integration/         # AWS real (3 testes)
 terraform/                 # ECS, S3, DynamoDB, API Gateway, IAM, ECR
 docker/                    # Dockerfiles das 3 apps
-.github/workflows/         # CI (unit) + CD (terraform → integração → push)
+.github/workflows/         # CI (unit) + CD (terraform → push → integração)
 data/                      # CSVs de referência local
 model/                     # model.pkl + model_card.json originais do case
 ```
