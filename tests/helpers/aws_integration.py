@@ -130,12 +130,6 @@ def model_predict_env(outputs: dict[str, str], run_id: str) -> dict[str, str]:
 
 def recommendations_api_env(outputs: dict[str, str]) -> dict[str, str]:
     """Environment for the recommendations API live AWS connectors."""
-    metrics_table = os.getenv("METRICS_DYNAMODB_TABLE", "").strip()
-    if not metrics_table:
-        metrics_table = require_terraform_output(
-            outputs,
-            "api_metrics_dynamodb_table_name",
-        )
     return {
         "AWS_REGION": os.getenv("AWS_REGION", "us-east-1"),
         "DATA_BUCKET": require_terraform_output(outputs, "data_bucket_name"),
@@ -144,7 +138,6 @@ def recommendations_api_env(outputs: dict[str, str]) -> dict[str, str]:
             outputs,
             "predictions_dynamodb_table_name",
         ),
-        "METRICS_DYNAMODB_TABLE": metrics_table,
         "LOG_LEVEL": "INFO",
     }
 

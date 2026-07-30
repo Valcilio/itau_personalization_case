@@ -70,4 +70,4 @@ def test_recommendations_api_reads_predictions_from_dynamodb(live_client) -> Non
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "recommendations_api_requests_total" in metrics.text
-    assert collector.store.__class__.__name__ == "DynamoDBMetricsStore"
+    assert collector.store.__class__.__name__ == "InMemoryMetricsStore"

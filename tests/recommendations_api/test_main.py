@@ -1,10 +1,12 @@
 """Unit tests for recommendations_api.main."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from recommendations_api.domain.utils.apilogger import ApiLogger
 from recommendations_api.domain.utils.metrics import create_metrics_collector
 from recommendations_api.main import (
     app,
@@ -79,10 +81,15 @@ def test_filtered_endpoint_and_metrics() -> None:
     assert "recommendations_api_requests_total" in metrics_response.text
 
 
-def test_get_metrics_returns_prometheus_text() -> None:
+def test_get_metrics_returns_prometheus_text(capsys) -> None:
+    ApiLogger._configured = False
+    logging.getLogger(ApiLogger.LOG_NAMESPACE).handlers.clear()
+    ApiLogger.configure()
+
     _reset_app()
     client = TestClient(app)
     client.get("/recommendation/u_0231")
     response = client.get("/metrics")
     assert "text/plain" in response.headers.get("content-type", "")
     assert get_metrics.__name__ == "get_metrics"
+    assert "api_metrics_snapshot" in capsys.readouterr().out

@@ -74,8 +74,10 @@ def health() -> dict[str, str]:
 @app.get("/metrics")
 def get_metrics() -> Response:
     """Expose basic Prometheus metrics."""
+    collector = get_metrics_collector()
+    collector.log_snapshot(source="metrics_endpoint")
     return PlainTextResponse(
-        content=get_metrics_collector().render_prometheus(),
+        content=collector.render_prometheus(),
         media_type="text/plain; version=0.0.4",
     )
 

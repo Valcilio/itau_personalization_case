@@ -1,11 +1,13 @@
 """Unit tests for recommendations_api.domain.utils.metrics."""
 
+import logging
 import time
 from unittest.mock import patch
 
 from prometheus_client.parser import text_string_to_metric_families
 
 from recommendations_api.domain.gateways.metricsstore import InMemoryMetricsStore
+from recommendations_api.domain.utils.apilogger import ApiLogger
 from recommendations_api.domain.utils.metrics import (
     MetricsCollector,
     PersistentMetricsCollector,
@@ -33,13 +35,35 @@ def test_timer_elapsed_ms() -> None:
     assert timer.elapsed_ms() >= 10
 
 
-def test_metrics_collector_observe_and_render() -> None:
+def test_metrics_collector_observe_and_render(capsys) -> None:
+    ApiLogger._configured = False
+    logging.getLogger(ApiLogger.LOG_NAMESPACE).handlers.clear()
+    ApiLogger.configure()
+
     collector = create_metrics_collector()
     collector.observe(latency_ms=10.0)
     collector.observe(latency_ms=30.0, is_error=True, is_cold_start=True)
     parsed = _parse_metrics(collector.render_prometheus())
     assert parsed["recommendations_api_requests_total"] == 2
     assert parsed["recommendations_api_errors_total"] == 1
+
+    output = capsys.readouterr().out
+    assert "api_request_metric" in output
+    assert '"requests_total": 2' in output
+
+
+def test_metrics_collector_log_snapshot(capsys) -> None:
+    ApiLogger._configured = False
+    logging.getLogger(ApiLogger.LOG_NAMESPACE).handlers.clear()
+    ApiLogger.configure()
+
+    collector = create_metrics_collector()
+    collector.observe(latency_ms=12.0)
+    collector.log_snapshot(source="test")
+    output = capsys.readouterr().out
+    assert "api_metrics_snapshot" in output
+    assert '"source": "test"' in output
+    assert '"latency_p50_ms": 12.0' in output
 
 
 def test_persistent_metrics_collector_reads_store() -> None:

@@ -102,22 +102,6 @@ data "aws_iam_policy_document" "ecs_task" {
       "${aws_dynamodb_table.predictions.arn}/index/*",
     ]
   }
-
-  statement {
-    sid = "DynamoDBApiMetrics"
-    actions = [
-      "dynamodb:Query",
-      "dynamodb:GetItem",
-      "dynamodb:BatchGetItem",
-      "dynamodb:PutItem",
-      "dynamodb:UpdateItem",
-      "dynamodb:DescribeTable",
-    ]
-    resources = [
-      aws_dynamodb_table.api_metrics.arn,
-      "${aws_dynamodb_table.api_metrics.arn}/index/*",
-    ]
-  }
 }
 
 resource "aws_iam_role" "ecs_task" {

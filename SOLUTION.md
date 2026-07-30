@@ -32,8 +32,7 @@ O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 | **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
 | **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB |
 | **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3 |
-| **Monitoring** | CloudWatch Logs | Logs de infraestrutura e aplicação (treino, batch e API) |
-| **Metrics Register** | DynamoDB (`personalization-api-metrics`) | Métricas de API persistidas e expostas via `/metrics` (Prometheus) |
+| **Monitoring** | CloudWatch Logs + `/metrics` (in-memory) | Logs de infraestrutura e aplicação; métricas Prometheus expostas pelo container |
 
 Rotas expostas via API Gateway (autenticação por `x-api-key`, exceto `/health`):
 
@@ -107,7 +106,6 @@ Com variáveis apontando para recursos AWS já existentes:
 export AWS_REGION=us-east-1
 export DATA_BUCKET=<terraform output data_bucket_name>
 export PREDICTIONS_DYNAMODB_TABLE=<terraform output predictions_dynamodb_table_name>
-export METRICS_DYNAMODB_TABLE=<terraform output api_metrics_dynamodb_table_name>
 
 PYTHONPATH=src uvicorn recommendations_api.main:app --host 0.0.0.0 --port 8080
 ```
@@ -230,7 +228,7 @@ Features são validadas via entidades (`Costumer` / `Customer`) antes de escalar
 4. `recommendation_score` = `popularity_score`; `cold_start_flag: true` na resposta.
 5. Logs registram `cold_start_fallback_selected`.
 
-**Trade-off:** simples, determinístico e explicável; não personaliza nada além da popularidade. Alternativas futuras: trending por categoria, embeddings, ou bandit exploration.
+**Trade-off:** simples, determinístico e explicável. Focamos em garantir que caso o cliente não tenha uma opção personalizada para ele, ele receba indicação do produto mais popular. Porém, se viermos a ter mais informações como época do ano, idade do cliente ou outros itens, podemos futuramente implementar uma tratativa de cold start melhorada.
 
 ---
 
@@ -244,27 +242,27 @@ Features são validadas via entidades (`Costumer` / `Customer`) antes de escalar
 | Custo de inferência concentrado em job agendado | Novos usuários/produtos só aparecem após re-run |
 | Escala horizontal da API sem carregar sklearn | Tabela grande (~30k+ itens) no replace completo |
 
-### 2. Replace completo da tabela DynamoDB
+O Replace completo ocorre aqui, pois os dados são estáticos visto que esse é um case de processo seletivo, em um cenário real, os dados consumidos pelo ECS de predição e os dados registrados no DynamoDB devem ser incrementais.
 
-Cada `model_predict` faz scan → delete → put de todo o snapshot. Garante consistência (“tabela = última execução”), mas é **lento** (~minutos) e caro em escala. Alternativa: particionar por versão ou usar TTL + writes incrementais.
-
-### 3. Três apps separadas
+### 2. Três apps separadas
 
 Isola responsabilidades e permite escalar/versionar treino, batch e API independentemente. Custo: mais imagens Docker, mais Terraform e mais superfície operacional.
 
-### 4. Clean Architecture leve
+### 3. Clean Architecture
 
 Cada app segue `domain/entities`, `domain/usecases`, `domain/gateways`, `main.py`. Facilita testes unitários com mocks nos gateways e testes de integração sem mock nas bordas AWS.
 
-### 5. SageMaker Model Registry
+Graças a essa estrutura de software pudemos segregar as regras de negócio dos fatores externos em nossa aplicação.
 
-`model_train` registra pacotes aprovados; `model_predict` consome **versão fixa** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`) para reprodutibilidade. Versões novas exigem bump explícito — seguro, porém manual.
+### 4. SageMaker Model Registry
 
-### 6. Métricas persistentes no DynamoDB
+`model_train` registra pacotes aprovados e permite versionamento dos modelos; `model_predict` consome **versão fixa** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`), pois é um requisito do case que usemos o mesmo modelo que foi fornecido no desafio sem retreino (a pipeline de treino é funcional e foi testada, mas não usamos suas versões geradas). Em cenário real, é recomendado que a versão seja mudada dinamicamente, de acordo com o que for configurado como em produção no model registry.
 
-Contadores e latências sobrevivem restart do container e alimentam `/metrics` via `prometheus_client`. Trade-off: write amplificado por request vs. solução in-memory.
+### 5. Métricas in-memory + logs estruturados
 
-### 7. CI/CD com gate de integração
+Contadores e latências ficam in-memory no processo da API e alimentam `/metrics` via `prometheus_client`. Cada request também emite `api_request_metric` e cada scrape de `/metrics` emite `api_metrics_snapshot` nos logs JSON — recuperáveis depois no CloudWatch Logs Insights.
+
+### 6. CI/CD com gate de integração
 
 Testes AWS rodam **após** `terraform apply` e **antes** do push de imagens. Falha → rollback do state Terraform. Protege infra quebrada, mas aumenta tempo de pipeline e exige conta AWS dedicada ao CI.
 
@@ -322,7 +320,20 @@ Campos principais por request: `user_id`, `latency_ms`, `cold_start_flag`, `coun
 | `recommendations_api_latency_ms` | Summary | p50/p95 + sum/count |
 | `recommendations_api_latency_avg_ms` | Gauge | Média |
 
-Persistência em DynamoDB (`personalization-api-metrics`) via `DynamoDBMetricsStore`; fallback in-memory quando `METRICS_DYNAMODB_TABLE` não está definido (dev local).
+Métricas mantidas in-memory no container (`InMemoryMetricsStore`), expostas via `prometheus_client` e **replicadas em logs estruturados** para consulta histórica no CloudWatch:
+
+| Evento | Quando | Campos principais |
+|--------|--------|-------------------|
+| `api_request_metric` | Após cada request de recomendação | `latency_ms`, `is_error`, `is_cold_start`, `requests_total`, `errors_total`, `latency_p50_ms`, `latency_p95_ms` |
+| `api_metrics_snapshot` | A cada `GET /metrics` | Totais agregados + p50/p95 |
+
+Exemplo de query no CloudWatch Logs Insights:
+
+```
+fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
+| filter event = "api_metrics_snapshot"
+| sort @timestamp desc
+```
 
 ---
 
@@ -379,7 +390,6 @@ model/                     # model.pkl + model_card.json originais do case
 |----------|-----|-----------|
 | `DATA_BUCKET` | todos | Bucket S3 com `events.csv` / `products.csv` |
 | `PREDICTIONS_DYNAMODB_TABLE` | predict, API | Tabela de predições |
-| `METRICS_DYNAMODB_TABLE` | API | Tabela de métricas |
 | `MODEL_PACKAGE_GROUP_NAME` | train, predict | SageMaker Model Registry group |
 | `INFERENCE_IMAGE_URI` | train | URI ECR registrada no model package |
 | `AWS_REGION` | todos | Região AWS (default `us-east-1`) |

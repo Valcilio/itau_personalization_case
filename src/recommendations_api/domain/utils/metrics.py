@@ -1,8 +1,9 @@
-"""Prometheus metrics backed by persistent storage."""
+"""Prometheus metrics backed by in-memory storage."""
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client.core import (
@@ -12,13 +13,29 @@ from prometheus_client.core import (
 )
 
 from recommendations_api.domain.gateways.metricsstore import (
+    MetricsSnapshot,
     MetricsStore,
     build_metrics_store,
 )
+from recommendations_api.domain.utils.apilogger import ApiLogger
+
+
+def _snapshot_log_fields(snapshot: MetricsSnapshot) -> dict[str, Any]:
+    """Return aggregated metric fields for structured logging."""
+    return {
+        "requests_total": snapshot.requests_total,
+        "errors_total": snapshot.errors_total,
+        "cold_start_total": snapshot.cold_start_total,
+        "latency_count": snapshot.latency_count,
+        "latency_sum_ms": round(snapshot.latency_sum, 2),
+        "latency_avg_ms": round(snapshot.latency_avg, 2),
+        "latency_p50_ms": round(snapshot.latency_quantile(50), 2),
+        "latency_p95_ms": round(snapshot.latency_quantile(95), 2),
+    }
 
 
 class PersistentMetricsCollector:
-    """Expose metrics from persistent storage using prometheus_client."""
+    """Expose metrics from the in-memory store using prometheus_client."""
 
     def __init__(self, store: MetricsStore) -> None:
         self.store = store
@@ -79,6 +96,7 @@ class MetricsCollector:
         self.store = build_metrics_store(store)
         self.registry = CollectorRegistry()
         self.registry.register(PersistentMetricsCollector(self.store))
+        self.logger = ApiLogger(self.__class__.__name__)
 
     def observe(
         self,
@@ -92,6 +110,22 @@ class MetricsCollector:
             latency_ms=latency_ms,
             is_error=is_error,
             is_cold_start=is_cold_start,
+        )
+        snapshot = self.store.load_snapshot()
+        self.logger.info(
+            "api_request_metric",
+            latency_ms=round(latency_ms, 2),
+            is_error=is_error,
+            is_cold_start=is_cold_start,
+            **_snapshot_log_fields(snapshot),
+        )
+
+    def log_snapshot(self, *, source: str) -> None:
+        """Emit the current aggregated metrics snapshot to structured logs."""
+        self.logger.info(
+            "api_metrics_snapshot",
+            source=source,
+            **_snapshot_log_fields(self.store.load_snapshot()),
         )
 
     def render_prometheus(self) -> str:
