@@ -20,7 +20,7 @@ A solução separa **treino**, **predição em batch**, **monitoramento de drift
 ### Arquitetura na AWS
 
 <p align="center">
-  <img src="https://i.imgur.com/dm47Hfh.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
+  <img src="https://i.imgur.com/oiSi8dO.png" alt="Diagrama de arquitetura — Personalization Service na AWS" width="680" />
 </p>
 
 O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
@@ -33,8 +33,37 @@ O fluxo completo, da esteira de CI/CD até a resposta síncrona ao usuário:
 | **Data Dependency** | S3 (`training-data/`) | `events.csv` e `products.csv` — dependência compartilhada entre treino e predição |
 | **Prediction** | ECS `model_predict` → S3 + DynamoDB | Batch: calcula scores, registra predições/features no S3 e grava último snapshot no DynamoDB; disparado via `null_resource` após train na CI; ao final, dispara `model_drift_monitor` (ECS RunTask) |
 | **Drift monitoring** | ECS `model_drift_monitor` + SNS + S3 (`model-performance/`) | Precision/recall (ground truth = `purchase`), data drift (mediana 50%, PSI > 0.25, KS p < 0.05); relatório parquet versionado; e-mail SNS em drift/retreino; retreino via ECS RunTask de `model_train` se thresholds forem violados |
-| **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → ECS Fargate `recommendations_api` | Resposta **síncrona**: ECS lê últimas predições do DynamoDB; cold start via `products.csv` no S3. **Sem Lambda** — todo compute é ECS Fargate |
+| **Endpoint (serving)** | API Gateway → VPC Link → **NLB → ALB** → **ECS Service** `recommendations_api` | Único cluster com serviço always-on; resposta **síncrona** lendo DynamoDB; cold start via `products.csv` no S3. **Sem Lambda** |
 | **Monitoring (API)** | CloudWatch Logs + `/metrics` (in-memory) | Logs de infraestrutura e aplicação; métricas Prometheus/Datadog expostas pelo container da API |
+
+### Clusters ECS: serviço (API) vs. jobs batch (ML)
+
+Existem **quatro clusters ECS Fargate** independentes — um por aplicação — mas **dois modos de execução** distintos:
+
+| Cluster | App | Modo | Comportamento |
+|---------|-----|------|----------------|
+| `personalization-recommendations-api` | `recommendations_api` | **ECS Service** (always-on) | `aws_ecs_service` com `desired_count` ≥ 1, registrado no **ALB**, health check no container, autoscaling opcional. Atende requisições HTTP síncronas 24/7 via API Gateway. |
+| `personalization-model-train` | `model_train` | **RunTask** (one-shot) | Sem `ecs_service`. Cada execução é um task avulso (`aws ecs run-task`): treina, registra no SageMaker, encerra. |
+| `personalization-model-predict` | `model_predict` | **RunTask** (one-shot) | Idem — gera predições, grava S3/DynamoDB, dispara drift monitor, encerra. |
+| `personalization-model-drift-monitor` | `model_drift_monitor` | **RunTask** (one-shot) | Idem — avalia drift, grava relatório, pode disparar retreino, encerra. |
+
+**Por que separar?** A API precisa de um **serviço long-lived** atrás do load balancer para latência previsível e disponibilidade contínua. Treino, predição e monitoramento são **pipelines batch**: sobem sob demanda, consomem recursos intensivos por minutos e terminam — não faz sentido mantê-los como serviço always-on. Os clusters batch também se encadeiam via `ecs:RunTask` (predict → drift → train) sem passar pela CI.
+
+> Apenas o cluster **`recommendations-api`** possui ECS Service. Os demais existem só como “landing zone” para task definitions e RunTasks disparados pela CI, pelo Terraform (`null_resource`) ou por outro job (ex.: predict → drift).
+
+### API Key (gerada no API Gateway)
+
+A autenticação da API pública usa **API Keys nativas do Amazon API Gateway** — não há serviço de auth customizado nem validação de chave no FastAPI.
+
+Fluxo de provisionamento (`terraform/api_gateway_recommendations.tf`):
+
+1. **`aws_api_gateway_api_key`** — o Terraform cria a chave; a **AWS gera o valor** automaticamente.
+2. **`aws_api_gateway_usage_plan`** — associa a chave ao stage `v1` da REST API.
+3. **`aws_api_gateway_usage_plan_key`** — vincula key ↔ usage plan.
+4. Cada método (exceto `GET /health`) declara **`api_key_required = true`** — o Gateway rejeita requests sem header `x-api-key` **antes** do tráfego chegar ao VPC Link/NLB.
+5. O valor é **replicado** para **SSM Parameter Store** (`/personalization/recommendations-api/api-key`, SecureString) e exposto via `terraform output recommendations_api_key` — conveniência para testes, notebooks e CI; a **fonte da chave é o API Gateway**.
+
+O container FastAPI **não lê nem valida** `RECOMMENDATIONS_API_KEY`; a env homônima no task definition da API existe por compatibilidade/legado, mas a proteção ocorre **somente na borda** (API Gateway).
 
 Rotas expostas via API Gateway (autenticação por `x-api-key`, exceto `/health`):
 
@@ -60,137 +89,452 @@ push → CI (pylint + unit tests)
 
 > O **drift monitor** não é um job separado na pipeline CD: ele é acionado automaticamente ao final de cada `model_predict` em produção (`DRIFT_MONITOR_ENABLED=true`). A CI também publica a imagem `model-drift-monitor` no ECR.
 
+### Simplificações do case (vs. produção real)
+
+Algumas escolhas deste repositório existem **apenas para facilitar a operação e a reprodução do case**. Em um ambiente Itaú/produção, a orquestração e a parametrização seriam diferentes:
+
+| Tópico | Como está neste case | Como seria em produção |
+|--------|----------------------|-------------------------|
+| **Versão do modelo (`model_predict`)** | `HARDCODED_MODEL_PACKAGE_VERSION = 1` — sempre o baseline entregue no README | Parâmetro resolvido em runtime: versão (ou alias) **aprovada para produção** no SageMaker Model Registry |
+| **Thresholds do drift monitor** | Constantes no código (ex.: precision/recall < 50%, score binário > 0.5, PSI/KS/mediana fixos em `DataDriftChecker` / `CallTrainPipeline`) | Parâmetros configuráveis — idealmente **metadados propagados pelo job de predição** (ou Parameter Store / feature store) por execução/modelo |
+| **Disparo de `model_train` / `model_predict` na CI** | `null_resource` + `terraform apply -target=...` após testes de integração | **EventBridge** (agendamento ou eventos de dados) + **Step Functions** (ordenação, retries, aprovações humanas) no momento adequado do pipeline de ML |
+| **Disparo do `model_drift_monitor`** | Recomendado via **`model_predict`** (RunTask com env dinâmica) | Mesmo padrão: predict conclui → dispara monitor; evitar RunTask “solto” sem o contexto da predição |
+
+**1. Versão do modelo e thresholds hardcoded**
+
+A versão **1** fixa em `model_predict` e os limiares fixos do drift monitor simplificam o case: o avaliador sempre vê o mesmo baseline e regras previsíveis. Em produção, **`model_predict` consultaria o Registry** (versão com status *Approved* / alias `Production`) e os **thresholds viriam de configuração externa** — por exemplo, metadados gravados junto com o snapshot de predições no S3 ou parâmetros versionados por modelo/campanha.
+
+**2. Triggers na pipeline CI/CD**
+
+Os jobs `trigger-model-train` e `trigger-model-predict` no GitHub Actions existem para **reproduzir o fluxo ponta a ponta após cada deploy**, sem exigir operação manual. Isso **não** modela o agendamento real de MLOps: em produção, treino e predição seriam acionados por **EventBridge** (cron, chegada de dados, alarmes) e orquestrados por **Step Functions**, desacoplados do deploy de infra/API.
+
+**3. Dependência do drift monitor em relação ao `model_predict`**
+
+O `model_drift_monitor` precisa, entre outras variáveis, de **`PREDICTIONS_S3_URI`** e **`PREDICTIONS_FILENAME`** — informações do snapshot que acabou de ser gerado. Esses valores são injetados pelo **`model_predict`** no `ecs:RunTask` (container overrides). A task definition estática do drift monitor traz apenas configuração de infra (buckets, SNS, cluster de retreino, etc.).
+
+**Recomendação operacional:** sempre rode o **`model_predict`** e deixe que ele dispare o drift monitor (`DRIFT_MONITOR_ENABLED=true`). Disparar o drift monitor isoladamente (ex.: `terraform apply` com `run_model_drift_monitor_on_apply=true` ou `aws ecs run-task` manual) só funciona de forma limitada — há fallback para buscar a predição mais recente no S3, mas **sem o contexto completo** que o predict repassa no trigger.
+
 ---
 
 ## Como rodar o projeto
 
-### Pré-requisitos
+Há **três formas** de usar o repositório:
 
-- Python **≥ 3.12**
-- Docker (opcional, recomendado para paridade com produção)
-- AWS CLI + credenciais (apenas para deploy e testes de integração)
-- Terraform **≥ 1.5.0** (deploy de infra; CI usa **1.9.8**)
+| Caminho | Quando usar | AWS necessária? |
+|---------|-------------|-----------------|
+| **A. Somente local** | Validar código, pytest, pylint | Não |
+| **B. AWS manual** | Reproduzir o case em **outra conta/região** do zero | Sim |
+| **C. GitHub Actions** | Deploy contínuo após push (como em produção do case) | Sim (secrets no repo) |
 
-### Instalação local
+O passo a passo completo do caminho **B** está abaixo. Os caminhos A e C têm seções próprias mais adiante.
+
+---
+
+## Passo a passo — reproduzir o case em outro ambiente AWS
+
+Guia para subir a stack completa (infra + imagens + batch + API pública) em uma **conta AWS nova** ou outra região, sem depender da CI.
+
+### O que você terá ao final
+
+- 4 imagens no **ECR**, 4 **clusters ECS** (1 service always-on + 3 jobs batch)
+- **S3** (data + models), **DynamoDB** (predições), **SageMaker Model Registry**
+- **API Gateway** público com **API Key** nativa
+- Predições em produção após `model_predict`; drift monitor disparado automaticamente
+- Logs em **CloudWatch**; alertas **SNS** (após confirmar subscription por e-mail)
+
+Tempo estimado (primeira vez): **1–3 h** (inclui build de imagens e batch de ~30k linhas no DynamoDB).
+
+**Checklist:**
+
+| # | Etapa | Comando / seção |
+|---|--------|-----------------|
+| 1 | Pré-requisitos (Python, Docker, AWS CLI, Terraform) | §1 |
+| 2 | Clone + `pytest` local | §2 |
+| 3 | Bootstrap state (S3 + DynamoDB lock) | §3 |
+| 4 | Configurar `terraform/versions.tf` backend | §4 |
+| 5 | `terraform apply` (infra, sem batch) | §5 |
+| 6 | Build + push 4 imagens → ECR | §6 |
+| 7 | `model_train` → `model_predict` (drift automático) | §7 |
+| 8 | Confirmar SNS + anotar API Key | §8 |
+| 9 | `curl` / pytest / notebook | §9 |
+
+---
+
+### 1. Pré-requisitos
+
+**Ferramentas na máquina:**
+
+| Ferramenta | Versão mínima | Uso |
+|------------|---------------|-----|
+| Python | 3.12+ | Testes locais, scripts |
+| Docker | recente | Build/push das imagens |
+| AWS CLI v2 | — | Credenciais, ECR login, RunTask manual |
+| Terraform | 1.5+ (CI usa 1.9.8) | Infra |
+
+**Conta AWS — permissões IAM (resumo):** o usuário/role precisa criar e gerenciar, no mínimo: S3, DynamoDB, ECR, ECS, IAM roles, CloudWatch Logs, API Gateway, VPC Link, ELB (NLB/ALB), SageMaker Model Registry, SNS, SSM Parameter Store, e `ecs:RunTask` / `iam:PassRole` entre tasks.
+
+**Credenciais:**
 
 ```bash
-git clone <repo>
-cd personalization_case
+export AWS_REGION=us-east-1          # ou a região desejada
+aws sts get-caller-identity            # confirme account id e acesso
+```
+
+---
+
+### 2. Clone e ambiente Python
+
+```bash
+git clone <url-do-seu-repo>
+cd itau_personalization_case          # ajuste o nome do diretório clonado
+
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
 
-### Testes unitários (padrão, sem AWS)
+**Validação rápida (sem AWS):**
 
 ```bash
-pytest                    # 140 testes, ~2s
-pylint src                # lint do código de produção
+pylint src
+pytest -m "not integration"            # ~145 testes, ~2s
 ```
 
-Testes de integração são **excluídos** do `pytest` padrão (`-m "not integration"`).
+---
 
-### Testes de integração (AWS real)
+### 3. Bootstrap do state Terraform (uma vez por conta AWS)
 
-Requer infra aplicada e credenciais configuradas:
+O stack principal usa **backend remoto** (S3 + lock DynamoDB). Na **primeira** execução em uma conta, provisione o bootstrap:
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform apply -var="aws_region=${AWS_REGION}"
+terraform output                          # anote bucket, tabela e backend_config
+cd ../..
+```
+
+Isso cria:
+
+- Bucket `personalization-terraform-state-<ACCOUNT_ID>`
+- Tabela `personalization-terraform-locks`
+
+---
+
+### 4. Apontar o backend para sua conta
+
+Edite `terraform/versions.tf` e substitua o bloco `backend "s3"` pelos valores do output do bootstrap (conta/região novas):
+
+```hcl
+backend "s3" {
+  bucket         = "personalization-terraform-state-<SEU_ACCOUNT_ID>"
+  key            = "terraform/state/model-train/terraform.tfstate"
+  region         = "us-east-1"                    # mesma região do bootstrap
+  dynamodb_table = "personalization-terraform-locks"
+  encrypt        = true
+}
+```
+
+Inicialize o stack principal:
 
 ```bash
 cd terraform
-terraform init
-terraform apply -var="image_tag=UAT" -var="aws_region=us-east-1"
+terraform init -reconfigure
+```
 
-cd ..
+> Se migrar de local para remoto ou trocar bucket, use `terraform init -reconfigure`. Nunca commite state local com secrets.
+
+---
+
+### 5. Deploy da infraestrutura (sem rodar batch ainda)
+
+Use uma **tag de imagem** consistente em todo o fluxo (ex.: `UAT` ou `local-dev`). O primeiro apply **não** deve disparar train/predict/drift — as imagens ainda não existem no ECR.
+
+```bash
+cd terraform
+export IMAGE_TAG=UAT
+
+terraform plan \
+  -var="image_tag=${IMAGE_TAG}" \
+  -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=false" \
+  -var="run_model_predict_on_apply=false" \
+  -var="run_model_drift_monitor_on_apply=false"
+
+terraform apply \
+  -var="image_tag=${IMAGE_TAG}" \
+  -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=false" \
+  -var="run_model_predict_on_apply=false" \
+  -var="run_model_drift_monitor_on_apply=false"
+```
+
+**O que este apply cria:** ECR (4 repos), ECS clusters/task definitions, S3 (data + models + CSVs do case), DynamoDB, SageMaker model groups, API Gateway + API Key + VPC Link + NLB/ALB, SNS, IAM, CloudWatch, recursos de integração isolados.
+
+**Opcional — e-mail de alertas de drift:**
+
+```bash
+terraform apply ... -var="drift_alert_email=seu@email.com"
+```
+
+Anote outputs úteis:
+
+```bash
+terraform output -raw data_bucket_name
+terraform output -raw recommendations_api_gateway_endpoint
+terraform output -raw recommendations_api_key
+```
+
+---
+
+### 6. Build e push das imagens Docker → ECR
+
+Login no ECR e defina o registry:
+
+```bash
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+aws ecr get-login-password --region "${AWS_REGION}" \
+  | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+```
+
+Build e push das **4 imagens** (contexto = raiz do repo):
+
+```bash
+cd ..   # raiz do repositório
+
+docker build -f docker/model_train/Dockerfile \
+  --build-arg IMAGE_TAG="${IMAGE_TAG}" \
+  -t "${ECR_REGISTRY}/personalization-model-train:${IMAGE_TAG}" .
+docker push "${ECR_REGISTRY}/personalization-model-train:${IMAGE_TAG}"
+
+docker build -f docker/model_predict/Dockerfile \
+  -t "${ECR_REGISTRY}/personalization-model-predict:${IMAGE_TAG}" .
+docker push "${ECR_REGISTRY}/personalization-model-predict:${IMAGE_TAG}"
+
+docker build -f docker/model_drift_monitor/Dockerfile \
+  -t "${ECR_REGISTRY}/personalization-model-drift-monitor:${IMAGE_TAG}" .
+docker push "${ECR_REGISTRY}/personalization-model-drift-monitor:${IMAGE_TAG}"
+
+docker build -f docker/recommendations_api/Dockerfile \
+  -t "${ECR_REGISTRY}/personalization-recommendations-api:${IMAGE_TAG}" .
+docker push "${ECR_REGISTRY}/personalization-recommendations-api:${IMAGE_TAG}"
+```
+
+**API recommendations (ECS Service):** após o push, force novo deployment para puxar a imagem:
+
+```bash
+aws ecs update-service \
+  --cluster personalization-recommendations-api \
+  --service personalization-recommendations-api \
+  --force-new-deployment \
+  --region "${AWS_REGION}"
+```
+
+Aguarde o service ficar estável e `/health` responder via API Gateway (pode levar alguns minutos).
+
+---
+
+### 7. Pipelines batch — ordem obrigatória
+
+Ordem: **`model_train` → `model_predict` → (`model_drift_monitor` automático)**.
+
+O drift monitor **não** deve ser o ponto de entrada — ele depende de `PREDICTIONS_S3_URI` / `PREDICTIONS_FILENAME` injetados pelo predict (ver [Simplificações do case — item 3](#simplificações-do-case-vs-produção-real)).
+
+#### 7.1 Treino (seed baseline v1 + retreino)
+
+```bash
+cd terraform
+
+terraform apply \
+  -var="image_tag=${IMAGE_TAG}" \
+  -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=true" \
+  -var="run_model_predict_on_apply=false" \
+  -var="run_model_drift_monitor_on_apply=false" \
+  -target=null_resource.run_model_train_on_apply
+```
+
+Acompanhe logs: `/ecs/personalization/model-train`. Na primeira execução em Registry vazio, o job registra o `model.pkl` do case como **v1** e o retreino como **v2+**.
+
+#### 7.2 Predição (S3 + DynamoDB + trigger drift)
+
+```bash
+sleep 10   # margem para o task de treino ser aceito (mesmo padrão da CI)
+
+terraform apply \
+  -var="image_tag=${IMAGE_TAG}" \
+  -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=false" \
+  -var="run_model_predict_on_apply=true" \
+  -var="run_model_drift_monitor_on_apply=false" \
+  -target=null_resource.run_model_predict_on_apply
+```
+
+Logs: `/ecs/personalization/model-predict`. Este job:
+
+1. Grava `predictions_<timestamp>_<hash>.csv` no S3  
+2. Substitui a tabela `personalization-predictions` no DynamoDB (~30k linhas, **vários minutos**)  
+3. Dispara **`model_drift_monitor`** via `ecs:RunTask` com env dinâmica  
+
+Logs do drift: `/ecs/personalization/model-drift-monitor`.
+
+**Alternativa manual (equivalente aos outputs Terraform):**
+
+```bash
+eval "$(terraform output -raw model_train_ecs_run_task_command)"
+eval "$(terraform output -raw model_predict_ecs_run_task_command)"
+```
+
+> **Não** rode `run_model_drift_monitor_on_apply=true` isoladamente, salvo para debug — prefira sempre o fluxo via predict.
+
+---
+
+### 8. Pós-deploy — SNS e API Key
+
+**SNS:** após o primeiro apply, confirme a subscription no e-mail configurado em `drift_alert_email` (link “Confirm subscription”).
+
+**API Key:** gerada nativamente no **API Gateway** (ver [API Key (gerada no API Gateway)](#api-key-gerada-no-api-gateway)). Obtenha o valor:
+
+```bash
+cd terraform
+export API_KEY=$(terraform output -raw recommendations_api_key)
+export ENDPOINT=$(terraform output -raw recommendations_api_gateway_endpoint)
+```
+
+---
+
+### 9. Validar o deploy
+
+**Health (público, sem key):**
+
+```bash
+curl -s "${ENDPOINT}/health"
+```
+
+**Recomendações (requer key):**
+
+```bash
+curl -s -H "x-api-key: ${API_KEY}" "${ENDPOINT}/recommendations/u_0231" | jq .
+curl -s -H "x-api-key: ${API_KEY}" "${ENDPOINT}/recommendations/u_9999" | jq .   # cold start
+curl -s -H "x-api-key: ${API_KEY}" "${ENDPOINT}/metrics" | head
+```
+
+**Testes automatizados (AWS real):**
+
+```bash
+cd ..   # raiz do repo
 pytest tests/integration tests/api_tests -m integration -s
 ```
 
-Ordem enforced: `model_train` → `model_predict` → `recommendations_api` → smoke/metrics via API Gateway.  
-Os testes in-process da API usam a tabela DynamoDB de integração; os testes em `tests/api_tests` chamam o **API Gateway público** e exigem predições na **tabela de produção** (`personalization-predictions`).
+Ordem enforced: `model_train` → `model_predict` → API in-process → smoke/metrics via API Gateway.
 
-> **Primeiro deploy:** na CI, os `api_tests` rodam **antes** do `model_predict` de produção. A tabela de produção precisa já estar populada (deploy anterior ou execução manual de `model_predict`). Nos deploys seguintes, o `model_predict` disparado no CD anterior mantém a tabela pronta.
+> **Primeira execução dos `api_tests`:** exigem predições na tabela de **produção** (`personalization-predictions`). Complete o passo 7.2 antes.
 
-Os testes de integração **não alteram recursos de produção**:
-- `model_train` registra versões em `integration_model_package_group_name` (não no Model Group de produção).
-- `model_predict` e `recommendations_api` usam `integration_predictions_dynamodb_table_name` (tabela DynamoDB separada).
+Os testes de integração **não alteram recursos de produção** de forma destrutiva no Registry principal:
+- `model_train` de integração usa `integration_model_package_group_name`
+- `model_predict` e API in-process usam `integration_predictions_dynamodb_table_name`
 
-> **Nota:** `model_predict` em produção substitui ~30k linhas no DynamoDB e pode levar **vários minutos**. O teste de integração escreve na tabela isolada com o mesmo volume.
+#### Testes da API via notebook
 
-### API local (sem ECS)
+Alternativa interativa ao `pytest tests/api_tests`:
 
-Com variáveis apontando para recursos AWS já existentes:
+```bash
+cd notebooks
+jupyter notebook testing_endpoint.ipynb
+```
+
+O notebook cobre requisições manuais + bateria automatizada (smoke, filtros, auth, cold start, métricas). URL e `x-api-key` vêm de `terraform output` / SSM, ou:
+
+```bash
+export RECOMMENDATIONS_API_BASE_URL="https://<api-id>.execute-api.${AWS_REGION}.amazonaws.com/v1"
+export RECOMMENDATIONS_API_KEY="<sua-api-key>"
+export RECOMMENDATIONS_TEST_USER_ID="u_0231"
+export RECOMMENDATIONS_TEST_COLD_START_USER_ID="u_9999"
+```
+
+---
+
+### 10. Re-deploys e atualizações de código
+
+| Mudança | Ação |
+|---------|------|
+| Código Python (apps) | Rebuild + push imagem afetada → `ecs update-service` (API) ou novo RunTask (batch) |
+| Só Terraform (infra) | `terraform apply` com mesmas vars; `run_model_*_on_apply=false` na maioria dos casos |
+| Nova tag de release | Aplique com `-var="image_tag=<nova>"`, repita push ECR e batch se necessário |
+| Destruir stack | `terraform destroy` (cuidado: buckets com `force_destroy` apagam dados) |
+
+---
+
+### 11. Caminho alternativo — GitHub Actions (CI/CD)
+
+Se preferir não executar os passos 5–7 manualmente:
+
+1. Configure secrets no repositório: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+2. Bootstrap + backend configurados (passos 3–4) **antes** do primeiro push de CD
+3. Push na branch → workflow **Personalization CI/CD** executa: terraform → push ECR → integração → train → predict
+
+Detalhes: [Pipeline CI/CD](#pipeline-cicd-github-actions).
+
+---
+
+### 12. Desenvolvimento local apontando para AWS
+
+Com infra já aplicada, é possível rodar apps na máquina usando recursos remotos:
+
+**API local:**
 
 ```bash
 export AWS_REGION=us-east-1
-export DATA_BUCKET=<terraform output data_bucket_name>
-export PREDICTIONS_DYNAMODB_TABLE=<terraform output predictions_dynamodb_table_name>
+export DATA_BUCKET=$(terraform -chdir=terraform output -raw data_bucket_name)
+export PREDICTIONS_DYNAMODB_TABLE=$(terraform -chdir=terraform output -raw predictions_dynamodb_table_name)
 
 PYTHONPATH=src uvicorn recommendations_api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Endpoints locais:
-
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `GET` | `/health` | Liveness |
-| `GET` | `/metrics` | Métricas Prometheus 0.0.4 (default) ou Datadog Metrics API v2 (`?format=datadog`) |
-| `GET` | `/recommendations/{user_id}` | Top-N recomendações (N=10) |
-| `POST` | `/recommendations_filtered` | Recomendações com filtros |
-
-### Pipelines batch locais
+**Pipelines batch locais** (mesmas env vars dos containers — ver outputs Terraform):
 
 ```bash
-# Treino (seed do model.pkl do case como v1 se Registry vazio + retreino como próxima versão)
 export DATA_BUCKET=... MODEL_BUCKET=... MODEL_PACKAGE_GROUP_NAME=...
 export INFERENCE_IMAGE_URI=... IMAGE_TAG=local-dev
-# opcional: BASELINE_MODEL_DIR=./model BASELINE_MODEL_PREFIX=models/purchase_propensity/case-baseline-v1
 PYTHONPATH=src python -m model_train.main
 
-# Predição (lê CSVs do S3, escreve DynamoDB)
 export PREDICTIONS_DYNAMODB_TABLE=...
 PYTHONPATH=src python -m model_predict.main
 ```
 
-O JSON de saída do treino inclui `baseline_model_package_arn` quando o seed ocorreu na execução (caso contrário, `null`).
+> Rodar `model_predict` localmente **não** dispara o drift monitor no ECS, a menos que `DRIFT_MONITOR_*` estejam configurados e `DRIFT_MONITOR_ENABLED=true`.
 
-### Docker
+---
+
+### 13. Troubleshooting comum
+
+| Sintoma | Causa provável | O que fazer |
+|---------|----------------|-------------|
+| ECS task `CannotPullContainerError` | Imagem não existe no ECR para `image_tag` | Repita passo 6 com a mesma tag do Terraform |
+| API 403 sem key / 502 | Service ainda subindo ou API Key errada | Aguarde ECS service; use `terraform output recommendations_api_key` |
+| `api_tests` com `count=0` | DynamoDB de produção vazio | Rode passo 7.2 (`model_predict`) |
+| Drift monitor: `PREDICTIONS_S3_URI is required` | RunTask sem overrides do predict | Rode predict (passo 7.2); não dispare drift isolado |
+| SageMaker seed falha | Registry já tem v1 ou imagem train ausente no ECR | Verifique ECR e logs do train |
+| SNS sem e-mail | Subscription não confirmada | Confirme link no e-mail (passo 8) |
+
+---
+
+### Referência rápida — comandos úteis
 
 ```bash
+# Outputs
+terraform -chdir=terraform output
+
+# Logs (exemplos)
+aws logs tail /ecs/personalization/model-predict --follow --region "${AWS_REGION}"
+aws logs tail /ecs/personalization/recommendations-api --follow --region "${AWS_REGION}"
+
+# Docker local (sem push)
 docker build -f docker/recommendations_api/Dockerfile -t recommendations-api .
 docker build -f docker/model_predict/Dockerfile -t model-predict .
 docker build -f docker/model_train/Dockerfile --build-arg IMAGE_TAG=local-dev -t model-train .
 docker build -f docker/model_drift_monitor/Dockerfile -t model-drift-monitor .
-```
-
-A imagem `model-train` inclui o diretório `model/` em `/app/model` (`BASELINE_MODEL_DIR` padrão) para o seed automático do artefato original do case.
-
-### Deploy na AWS (produção)
-
-O deploy é automatizado pelo GitHub Actions. Detalhes completos nas seções [Pipeline CI/CD](#pipeline-cicd-github-actions) e [Infraestrutura Terraform](#infraestrutura-terraform).
-
-Resumo:
-
-1. **CI** — pylint + pytest unitário (PR e push)
-2. **CD** (somente push, não PR):
-   - `terraform apply` (infra, sem disparar predict)
-   - push das 4 imagens para ECR
-   - testes de integração AWS
-   - **trigger `model_train`** no ECS (somente após integração passar)
-   - **wait 10s** antes do predict
-   - **trigger `model_predict`** no ECS
-   - rollback automático do Terraform se integração falhar
-
-Secrets necessários no repositório: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`.
-
-Endpoint público (após deploy):
-
-```bash
-terraform output -raw recommendations_api_gateway_endpoint   # ex: .../v1
-terraform output -raw recommendations_api_key                # header x-api-key
-```
-
-Exemplo:
-
-```bash
-curl -H "x-api-key: $API_KEY" "$ENDPOINT/recommendations/u_0231"
-curl -H "x-api-key: $API_KEY" "$ENDPOINT/metrics"
 ```
 
 ---
@@ -222,7 +566,7 @@ A esteira está em `.github/workflows/` e é orquestrada por `workflow.yaml` (**
 ```
 workflow.yaml
   │
-  ├─ 1. ci-quality ────────────── pylint + pytest unitário (~140 testes)
+  ├─ 1. ci-quality ────────────── pylint + pytest unitário (~145 testes)
   │
   ├─ 2. ci-tag-release ────────── só se push (não PR)
   │       • main  → image_tag = v0.1.{run_number} + git tag
@@ -265,6 +609,8 @@ workflow.yaml
 **Terraform antes das imagens.** O `apply` inicial cria/atualiza ECR, ECS, IAM, etc. As imagens Docker referenciam repositórios que já existem. O `image_tag` da pipeline é passado como variável Terraform e compõe as URIs das task definitions (`local.*_image_uri`).
 
 **Batch jobs só após integração.** `model_train` e `model_predict` em produção só disparam se os testes de integração **e** os testes de API (`tests/api_tests`) passarem. Falha em qualquer um deles aciona o rollback do state Terraform. O treino roda primeiro; aguarda-se **10 segundos** (`sleep 10`) antes do predict, dando margem para o ECS RunTask de treino ser aceito pela API (o job não espera o treino terminar — apenas evita disparo simultâneo).
+
+> **Nota (case vs. produção):** esse encadeamento train → predict via Terraform na CD é uma **simplificação para reproduzir o case** após deploy. Em produção real, treino e predição seriam disparados por **EventBridge** e **Step Functions**, no timing correto do pipeline de dados/ML — não acoplados ao `terraform apply`. Ver [Simplificações do case](#simplificações-do-case-vs-produção-real).
 
 **Rollback limitado.** O rollback restaura o **state Terraform** e reconcilia a infra com a tag de imagem anterior. Dados já escritos (S3, DynamoDB, Registry) durante testes de integração **não** são revertidos automaticamente.
 
@@ -416,7 +762,7 @@ Cada um dispara um **ECS RunTask** one-shot via `local-exec` + AWS CLI quando a 
 |---------|---------|--------------|
 | `null_resource.run_model_train_on_apply` | `model_train` | Job `trigger-model-train`, após integração |
 | `null_resource.run_model_predict_on_apply` | `model_predict` | Job `trigger-model-predict`, após train + `sleep 10` |
-| `null_resource.run_model_drift_monitor_on_apply` | `model_drift_monitor` | Apenas apply manual (`-target=...`); em produção normal é disparado por `model_predict` |
+| `null_resource.run_model_drift_monitor_on_apply` | `model_drift_monitor` | Apenas apply manual (`-target=...`); **não recomendado** — em operação normal é disparado por `model_predict` |
 
 Comportamento comum:
 
@@ -462,27 +808,28 @@ terraform output -raw monitoring_prefix
 
 ### Apply manual (fora da CI)
 
+> **Guia completo:** o passo a passo detalhado (bootstrap, ECR, ordem train → predict, validação e troubleshooting) está em [Passo a passo — reproduzir o case em outro ambiente AWS](#passo-a-passo--reproduzir-o-case-em-outro-ambiente-aws).
+
+Resumo dos comandos Terraform para batch (após infra + imagens no ECR):
+
 ```bash
 cd terraform
-terraform init
-terraform plan  -var="image_tag=UAT" -var="run_model_train_on_apply=false" -var="run_model_predict_on_apply=false"
-terraform apply -var="image_tag=UAT" -var="run_model_train_on_apply=false" -var="run_model_predict_on_apply=false"
+export IMAGE_TAG=UAT AWS_REGION=us-east-1
 
-# build + push imagens manualmente para ECR, depois:
-terraform apply -var="image_tag=UAT" \
-  -var="run_model_train_on_apply=true" \
-  -var="run_model_predict_on_apply=false" \
+terraform apply -var="image_tag=${IMAGE_TAG}" -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=true" -var="run_model_predict_on_apply=false" \
+  -var="run_model_drift_monitor_on_apply=false" \
   -target=null_resource.run_model_train_on_apply
 
 sleep 10
 
-terraform apply -var="image_tag=UAT" \
-  -var="run_model_predict_on_apply=true" \
-  -var="run_model_train_on_apply=false" \
+terraform apply -var="image_tag=${IMAGE_TAG}" -var="aws_region=${AWS_REGION}" \
+  -var="run_model_train_on_apply=false" -var="run_model_predict_on_apply=true" \
+  -var="run_model_drift_monitor_on_apply=false" \
   -target=null_resource.run_model_predict_on_apply
 ```
 
-Após o apply, faça upload dos CSVs se necessário (Terraform já provisiona `events.csv` e `products.csv` do diretório `data/` no bucket).
+Os CSVs `events.csv` e `products.csv` são enviados ao S3 pelo próprio Terraform (diretório `data/`).
 
 ### IAM (resumo)
 
@@ -527,7 +874,17 @@ Resposta inclui metadados enriquecidos (`category`, `price`, `interactions`, `us
 
 ### Autenticação
 
-Na AWS, API Gateway exige header `x-api-key` em todas as rotas exceto `/health`. A validação ocorre **somente no gateway** — o FastAPI não consome nem verifica `RECOMMENDATIONS_API_KEY`; a chave fica no SSM (`/personalization/recommendations-api/api-key`) e é exposta via output Terraform.
+Resumo: header **`x-api-key`**, validado **apenas no API Gateway** (ver [API Key (gerada no API Gateway)](#api-key-gerada-no-api-gateway)). Rotas protegidas retornam 403 sem chave; `/health` é público (`api_key_required = false`).
+
+Para obter a chave após deploy:
+
+```bash
+terraform output -raw recommendations_api_key
+# ou, via SSM:
+aws ssm get-parameter --name "$(terraform output -raw recommendations_api_key_ssm_parameter)" --with-decryption
+```
+
+O FastAPI **não implementa** middleware de API key — quem bloqueia é o Gateway antes do VPC Link.
 
 ---
 
@@ -641,6 +998,8 @@ Nas execuções seguintes (Registry já populado), apenas o retreino é registra
 
 `model_predict` continua consumindo **`HARDCODED_MODEL_PACKAGE_VERSION = 1`** — ou seja, sempre o pacote baseline do case em produção, alinhado ao requisito do README. As versões 2+ ficam disponíveis no Registry para auditoria, comparação offline ou futura promoção de modelo, mas **não entram no serving** neste case.
 
+> **Case vs. produção:** a versão fixa é **deliberada para simplificar o case**. Em produção, `model_predict` resolveria a versão (ou alias) **em produção no SageMaker Model Registry**, não um inteiro hardcoded no código. Ver [Simplificações do case](#simplificações-do-case-vs-produção-real).
+
 ### Saída do pipeline
 
 Além dos campos já existentes, o JSON final do treino expõe:
@@ -687,6 +1046,8 @@ Além dos campos já existentes, o JSON final do treino expõe:
 
 Quarto app batch, acionado automaticamente ao final de cada `model_predict` em produção (via `ecs:RunTask`). Nos testes de integração, o disparo fica desabilitado (`DRIFT_MONITOR_ENABLED=false`).
 
+> **Forma recomendada de execução:** rode sempre o **`model_predict`** e deixe-o disparar o drift monitor. Variáveis críticas (`PREDICTIONS_S3_URI`, `PREDICTIONS_FILENAME`) são definidas **no momento do RunTask** pelo predict; a task definition sozinha não contém o snapshot a avaliar. Ver [Simplificações do case — item 3](#simplificações-do-case-vs-produção-real).
+
 ### Fluxo
 
 ```
@@ -732,6 +1093,8 @@ model_predict conclui
 
 > **Escopo do case:** o retreino registra novas versões no SageMaker, mas o `model_predict` continua servindo **v1** (baseline). O monitor demonstra o loop de MLOps; promoção automática de modelo servido ficaria para uma evolução futura.
 
+> **Thresholds hardcoded:** precision/recall < 50%, limiar de score 0.5, PSI/KS/mediana em `DataDriftChecker` estão **fixos no código** para simplificar o case. Em produção, seriam **parâmetros** — preferencialmente metadados associados à execução de predição (propagados pelo `model_predict`), não constantes em Python. Ver [Simplificações do case — item 1](#simplificações-do-case-vs-produção-real).
+
 ---
 
 ## Decisões de arquitetura e trade-offs
@@ -758,7 +1121,7 @@ Cada app segue `domain/entities`, `domain/usecases`, `domain/gateways`, `main.py
 
 Resumo: seed automático do `model.pkl` do case como **v1** quando o Registry está vazio; retreinos entram como **v2+**. Detalhes completos na seção [SageMaker Model Registry e seed do modelo baseline](#sagemaker-model-registry-e-seed-do-modelo-baseline).
 
-`model_predict` consome **versão fixa 1** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`): requisito do case. Em produção real, a versão servida viria de política de promoção no Registry.
+`model_predict` consome **versão fixa 1** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`): simplificação do case (ver [Simplificações do case](#simplificações-do-case-vs-produção-real)). Em produção real, a versão servida viria do **Model Registry** (pacote aprovado / alias de produção).
 
 ### 5. Métricas in-memory + logs estruturados
 
@@ -784,7 +1147,7 @@ Em escala Itaú, se a inferência passasse a ocorrer em tempo de request, faria 
 
 ### Unitários (`tests/`, espelha `src/`)
 
-- **140 testes** cobrindo feature engineering, handlers, filtros, cold start, métricas, drift monitor (precision/recall/data drift), gateways, seed do modelo baseline e helpers de API Gateway (mocks boto3/sklearn).
+- **145 testes** cobrindo feature engineering, handlers, filtros, cold start, métricas, drift monitor (precision/recall/data drift), gateways, seed do modelo baseline e helpers de API Gateway (mocks boto3/sklearn).
 - Execução rápida (~2s), roda em todo PR.
 - Helpers reutilizáveis em `tests/helpers/`:
   - `aws_integration.py` — leitura de outputs Terraform, builders de env, checks S3/DynamoDB
@@ -808,7 +1171,9 @@ Testes unitários adicionais em `tests/model_drift_monitor/` cobrem precision, r
 
 Testes de **carga** ficam em `notebooks/api_load_test.ipynb` — duas sessões comparáveis (usuários de `events.csv` vs cold start), 4×5 requisições concorrentes cada, compara latências client-side e coleta `/metrics` Prometheus ao final. Execução manual, fora da pipeline CI.
 
-Os testes em `tests/api_tests` replicam as validações automatizadas de `notebooks/testing_endpoint.ipynb` (smoke, filtros, auth, ranking, exclusão de produtos, métricas Prometheus/Datadog/`both`). Falha em qualquer etapa bloqueia os batch jobs de produção e aciona rollback do state Terraform na pipeline CD.
+Para validar a API de forma interativa (sem `pytest`), use `notebooks/testing_endpoint.ipynb` — ver [Testes da API via notebook](#testes-da-api-via-notebook) no passo 9 do guia de reprodução.
+
+Os testes em `tests/api_tests` replicam essas validações na pipeline CI. Falha em qualquer etapa bloqueia os batch jobs de produção e aciona rollback do state Terraform na pipeline CD.
 
 O teste in-process da API exercita HTTP de ponta a ponta (`TestClient` → FastAPI → handler → AWS), sem mockar camadas internas — atende ao requisito do README de integração com fluxo real.
 
@@ -892,7 +1257,7 @@ fields @timestamp, requests_total, errors_total, latency_p50_ms, latency_p95_ms
 ## O que faria diferente com mais tempo
 
 1. **Inferência incremental** — scorear só pares novos/alterados em vez de cartesiano completo; ou cache Redis por `(user_id, product_id)`.
-2. **Agendamento gerenciado** — EventBridge + ECS RunTask para `model_predict` diário, com alarmes se falhar.
+2. **Agendamento gerenciado** — EventBridge + Step Functions para `model_predict` e `model_train` (substituindo triggers acoplados ao deploy na CI; ver [Simplificações do case](#simplificações-do-case-vs-produção-real)).
 3. **Blue/green no deploy da API** — CodeDeploy ou second ECS service antes de trocar tráfego.
 4. **Versionamento de predições** — chave composta `(user_id, product_id, model_version)` no DynamoDB para rollback de modelo sem downtime.
 5. **Endpoint de recomendação real-time opcional** — para usuários VIP ou A/B, com timeout e circuit breaker.
@@ -922,7 +1287,7 @@ Exploração e validação manual — **fora da pipeline CI**:
 
 | Notebook | Propósito |
 |----------|-----------|
-| `notebooks/testing_endpoint.ipynb` | Testes manuais e automatizados via API Gateway; resolve URL/chave via Terraform/SSM; espelha `tests/api_tests/` (smoke + métricas + casos de borda) |
+| `notebooks/testing_endpoint.ipynb` | **Série de testes da API** via API Gateway: (1) requisições manuais por endpoint; (2) bateria automatizada espelhando `tests/api_tests/` + casos de borda. Resolve URL/chave via Terraform/SSM |
 | `notebooks/api_load_test.ipynb` | Teste de carga: 2 sessões (known vs cold start), 4 rounds × 5 req concorrentes, compara latências + `/metrics` |
 | `notebooks/features_explorations.ipynb` | EDA sobre `events.csv` e `products.csv` |
 | `notebooks/generating_input_dataset.ipynb` | Validação da geração do dataset de features vs expectativas do modelo |
@@ -966,7 +1331,7 @@ PLAN.md                      # planejamento interno de arquitetura (pré-impleme
 | `PREDICTIONS_DYNAMODB_TABLE` | predict, API | Tabela de predições |
 | `DRIFT_MONITOR_ENABLED` | predict | Dispara drift monitor ao final do predict (`true` em produção; `false` nos testes de integração) |
 | `DRIFT_MONITOR_CLUSTER` / `TASK_DEFINITION` / `SUBNETS` / `SECURITY_GROUP` | predict | Destino do ECS RunTask do drift monitor |
-| `PREDICTIONS_S3_URI` / `PREDICTIONS_FILENAME` | drift monitor | Snapshot avaliado (passados via overrides do RunTask) |
+| `PREDICTIONS_S3_URI` / `PREDICTIONS_FILENAME` | drift monitor | Snapshot avaliado — **injetados pelo `model_predict` no RunTask** (não confiar só na task definition) |
 | `MONITORING_BUCKET` / `MONITORING_PREFIX` | drift monitor | Destino S3 do relatório parquet |
 | `DRIFT_SNS_TOPIC_ARN` | drift monitor | Tópico SNS para alertas |
 | `MODEL_PACKAGE_GROUP_NAME` | train, predict | SageMaker Model Registry group |
@@ -989,7 +1354,9 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 - Predições desatualizadas entre execuções de `model_predict`.
 - Replace DynamoDB O(n) — upsert do snapshot novo seguido de delete de chaves obsoletas; lento para catálogos grandes (~30k linhas levam vários minutos).
 - Primeiro deploy na CI: `api_tests` exigem tabela de produção já populada (ver [Testes de integração](#testes-de-integração-aws-real)).
-- Model package version hardcoded em `model_predict` (v1 — baseline do case; retreinos ficam no Registry mas não são servidos).
+- **Versão do modelo e thresholds hardcoded** — simplificação do case; em produção seriam parâmetros (Registry + metadados do job de predição). Ver [Simplificações do case](#simplificações-do-case-vs-produção-real).
+- **Triggers train/predict na CI** — simplificação para reproduzir o fluxo; em produção: EventBridge + Step Functions.
+- **`model_drift_monitor` depende do trigger do `model_predict`** — não é previsto como job standalone na operação normal.
 - Drift monitor e retreino automático não têm teste de integração end-to-end na CI (unitários + disparo desabilitado em integração).
 - Subscription SNS por e-mail exige confirmação manual após o primeiro `terraform apply`.
 - Rollback do CI reverte **infra Terraform**, não dados escritos nos testes de integração.
@@ -1001,6 +1368,7 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 
 - Model card: `model/model_card.json`
 - Planejamento de arquitetura: `PLAN.md`
+- **Reproduzir em outro ambiente AWS:** [Passo a passo — reproduzir o case em outro ambiente AWS](#passo-a-passo--reproduzir-o-case-em-outro-ambiente-aws)
 - Notebook de registro manual (legado): `notebooks/register_actual_model.ipynb` — substituído pelo seed automático em `model_train`
-- Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb` → portado para `tests/api_tests/`
+- Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb` — série interativa de testes da API (manual + automatizado); equivalente a `tests/api_tests/`
 - Notebook de carga: `notebooks/api_load_test.ipynb`
