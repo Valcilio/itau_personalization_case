@@ -5,7 +5,7 @@ terraform {
     bucket         = "personalization-terraform-state-272175292064"
     key            = "terraform/state/model-train/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "personalization-terraform-locks"
+    use_lockfile = true
     encrypt        = true
   }
 
