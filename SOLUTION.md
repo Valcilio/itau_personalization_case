@@ -1292,7 +1292,6 @@ Exploração e validação manual — **fora da pipeline CI**:
 | `notebooks/features_explorations.ipynb` | EDA sobre `events.csv` e `products.csv` |
 | `notebooks/generating_input_dataset.ipynb` | Validação da geração do dataset de features vs expectativas do modelo |
 | `notebooks/model_understanding.ipynb` | Inspeção do `model.pkl` bundled (coeficientes, scaler, feature cols) |
-| `notebooks/register_actual_model.ipynb` | **Legado** — registro manual no SageMaker; substituído pelo seed automático em `model_train` |
 
 O diagrama de arquitetura AWS está no topo deste documento (Imgur); não há arquivo local em `docs/`.
 
@@ -1311,14 +1310,13 @@ tests/helpers/               # fixtures e helpers compartilhados (AWS + API Gate
 tests/integration/           # pipelines AWS isolados (3 testes ordenados)
 tests/api_tests/             # smoke + metrics via API Gateway público
 tests/model_drift_monitor/   # unitários do drift monitor
-notebooks/                   # exploração, carga e testes manuais (6 notebooks)
+notebooks/                   # exploração, carga e testes manuais (5 notebooks)
 terraform/                   # ECS Fargate, S3, DynamoDB, SNS, API Gateway, IAM, ECR, SageMaker
 terraform/bootstrap/         # state S3 + DynamoDB lock (setup one-time)
 docker/                      # Dockerfiles das 4 apps
 .github/workflows/           # CI (unit) + CD (terraform → push → integração → train → predict)
 data/                        # CSVs de referência local (~500 usuários, 60 produtos)
 model/                       # model.pkl, model.tar.gz e model_card.json originais do case
-PLAN.md                      # planejamento interno de arquitetura (pré-implementação)
 ```
 
 ---
@@ -1367,7 +1365,6 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 ## Referências rápidas
 
 - Model card: `model/model_card.json`
-- Planejamento de arquitetura: `PLAN.md`
 - **Reproduzir em outro ambiente AWS:** [Passo a passo — reproduzir o case em outro ambiente AWS](#passo-a-passo--reproduzir-o-case-em-outro-ambiente-aws)
 - Notebook de testes de endpoint: `notebooks/testing_endpoint.ipynb` — série interativa de testes da API (manual + automatizado); equivalente a `tests/api_tests/`
 - Notebook de carga: `notebooks/api_load_test.ipynb`
