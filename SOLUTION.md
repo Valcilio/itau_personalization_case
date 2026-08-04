@@ -258,7 +258,7 @@ Use credenciais de um **usuário IAM dedicado à CI** (não root). As mesmas per
 
 **Tags de imagem:** `main` → `v0.1.{run_number}` (+ git tag); demais branches → `UAT`.
 
-> **Limitação:** todas as branches (exceto PR) fazem CD na **mesma stack AWS** e branches não-`main` compartilham a tag `UAT` — pushes concorrentes se sobrescrevem. Ver [Limitações conhecidas](#limitações-conhecidas).
+> **Limitação:** todas as branches (exceto PR) fazem CD na **mesma stack AWS** e branches não-`main` compartilham a tag `UAT` — pushes concorrentes se sobrescrevem. Ver [Limitações e concessões](#limitações-e-concessões).
 
 ---
 
@@ -1043,49 +1043,38 @@ model_predict conclui
 
 ---
 
-## Decisões de arquitetura e trade-offs
+## API síncrona × API assíncrona
 
-### 1. Batch predict + DynamoDB em vez de inferência online
+| | API síncrona | API assíncrona |
+|---|--------------|----------------|
+| **Resposta** | O cliente envia o pedido e recebe o resultado na mesma hora | O sistema devolve um `request_id` de imediato; o cliente consulta o resultado depois |
+| **Código** | Fluxo fácil de ler, seguir e entender | Mais peças (fila, workers, status) |
+| **Testes** | Correção de erros e leitura de falhas de forma direta | Precisa validar enfileiramento e polling |
+| **Ordem** | Ideal quando as ações precisam acontecer em sequência exata | Ideal para tarefas pesadas (e-mails em massa, relatórios, inferência longa) |
+| **Recursos / escala** | Pode congestionar se a resposta demorar sob muita concorrência | Melhor uso de recursos; ajuda a atender muitos usuários sem travar |
 
-| Prós | Contras |
-|------|---------|
-| Latência baixa e previsível na API | Predições ficam stale até próximo batch |
-| Custo de inferência concentrado em job agendado | Novos usuários/produtos só aparecem após re-run |
-| Escala horizontal da API sem carregar sklearn | Tabela grande (~30k+ itens) no replace completo |
+Se falamos em modelos de machine learning **pesados** em produção realizando predições em tempo de execução, o ideal acaba sendo APIs **assíncronas**: como elas já retornam um `request_id` de imediato, dificilmente ficam congestionadas.
 
-O replace completo do DynamoDB é aceitável neste case (dados estáticos). Em produção, predições e writes deveriam ser incrementais.
+O case exige API **síncrona**. Por isso a arquitetura **pré-computa** os scores em batch (`model_predict`) e a API só lê o DynamoDB — baixa latência sem inferência online.
 
-### 2. Quatro apps separadas
+---
 
-Isola responsabilidades e permite escalar/versionar treino, batch, monitoramento e API independentemente. Custo: mais imagens Docker, mais Terraform e mais superfície operacional.
+## Principais trade-offs
 
-### 3. Clean Architecture
+### 1. Lista de recomendações alimentada por batch
 
-Cada app segue `domain/entities`, `domain/usecases`, `domain/gateways`, `main.py`. Isso separa regras de negócio de integrações externas e facilita testes unitários (mocks nos gateways) e de integração (AWS real nas bordas).
+- **Positivo:** torna a API mais rápida e mais leve, viabilizando conexões síncronas mesmo em alta escala.
+- **Negativo:** precisa esperar a próxima run do `model_predict` para atualizar a lista de recomendações.
 
-### 4. SageMaker Model Registry
+### 2. API síncrona
 
-Resumo: seed automático do `model.pkl` do case como **v1** quando o Registry está vazio; retreinos entram como **v2+**. Detalhes completos na seção [SageMaker Model Registry e seed do modelo baseline](#sagemaker-model-registry-e-seed-do-modelo-baseline).
+- **Positivo:** respostas rápidas para o cliente em tempo real (ou near-real time) e simples de usar.
+- **Negativo:** pode ficar congestionada caso receba muitas requisições simultâneas e demore para responder.
 
-`model_predict` consome **versão fixa 1** (`HARDCODED_MODEL_PACKAGE_VERSION = 1`): simplificação do case (ver [Simplificações do case](#simplificações-do-case-vs-produção-real)). Em produção real, a versão servida viria do **Model Registry** (pacote aprovado / alias de produção).
+### 3. Métricas in-memory + CloudWatch Logs
 
-### 5. Métricas in-memory + logs estruturados
-
-Contadores e latências ficam in-memory e alimentam `/metrics` via `prometheus_client`. Cada request emite `api_request_metric`; cada scrape de `/metrics` emite `api_metrics_snapshot` — ambos recuperáveis no CloudWatch Logs Insights.
-
-### 6. CI/CD com gate de integração
-
-Testes AWS rodam **após** `terraform apply` e **push das imagens** para o ECR; `model_train` e `model_predict` em produção só disparam se integração **e** API tests passarem (train → sleep 10s → predict). Falha em qualquer teste → rollback do state Terraform. Ver [Pipeline CI/CD](#pipeline-cicd-github-actions) e [Infraestrutura Terraform](#infraestrutura-terraform).
-
-### 7. API síncrona (e caminho assíncrono futuro)
-
-O case exige resposta síncrona; a arquitetura prioriza latência baixa na leitura — batch de inferência + DynamoDB é uma das alavancas principais.
-
-Em escala Itaú, se a inferência passasse a ocorrer em tempo de request, faria sentido evoluir para uma **API assíncrona**:
-
-- **Resposta imediata** com `request_id`, sem bloquear até o fim da inferência; o cliente consulta o resultado depois.
-- **Fila FIFO** absorve picos, serializa processamento e simplifica retries em falhas transientes.
-- **Backpressure explícito** — limitar concorrência na fila torna o scaling mais previsível sob carga máxima.
+- **Positivo:** `/metrics` já traz filtradas as métricas da sessão atual.
+- **Negativo:** é mais complexo extrair e analisar histórico só a partir de logs, sem ferramentas feitas para isso (como Datadog).
 
 ---
 
@@ -1294,19 +1283,20 @@ Lista completa nos `load_config()` de cada `main.py` e nos outputs do Terraform 
 
 ---
 
-## Limitações conhecidas
+## Limitações e concessões
 
-- Predições desatualizadas entre execuções de `model_predict`.
-- Replace DynamoDB O(n) — upsert do snapshot novo seguido de delete de chaves obsoletas; lento para catálogos grandes (~30k linhas levam vários minutos).
-- Primeiro deploy na CI: `api_tests` exigem tabela de produção já populada (ver [Testes de integração](#testes-de-integração-aws-real)).
-- **Versão do modelo e thresholds hardcoded** — simplificação do case; em produção seriam parâmetros (Registry + metadados do job de predição). Ver [Simplificações do case](#simplificações-do-case-vs-produção-real).
-- **Triggers train/predict na CI** — simplificação para reproduzir o fluxo; em produção: EventBridge + Step Functions.
-- **`model_drift_monitor` depende do trigger do `model_predict`** — não é previsto como job standalone na operação normal.
-- Drift monitor e retreino automático não têm teste de integração end-to-end na CI (unitários + disparo desabilitado em integração).
-- Subscription SNS por e-mail exige confirmação manual após o primeiro `terraform apply`.
-- Rollback do CI reverte **infra Terraform**, não dados escritos nos testes de integração.
-- **`scikit-learn` pinado em 1.8.x** para compatibilidade com artefato existente no S3.
-- **Um único ambiente AWS na CI/CD** — todo `push` (exceto PR) dispara CD completo na mesma stack; branches que não são `main` compartilham a tag de imagem `UAT` e **sobrescrevem o deploy umas das outras**. Não há ambiente UAT isolado para validar mudanças em paralelo antes de promover à produção; ver item 8 em [O que faria diferente com mais tempo](#o-que-faria-diferente-com-mais-tempo).
+### Limitações
+
+- As instâncias do SageMaker não podem ser usadas por limitação de quotas na conta nova.
+- A ferramenta de treinamento deve sempre registrar a **primeira versão** do modelo como o modelo fornecido pelo case.
+- Para evitar custos e concluir o case dentro do prazo, tudo foi desenvolvido em um **único ambiente**; na vida real, precisaríamos de ao menos 2: homologação e produção.
+
+### Concessões
+
+- Como os dados são estáticos, as escritas foram feitas por **overwrite**; na vida real teríamos algo incremental.
+- Não implementamos scheduler gerenciado para evitar custos (conta pessoal) — poderia ficar caro.
+- **Threshold fixo** no drift monitor; na vida real haveria threshold variável por modelo — aqui só há um modelo, então ficou fixo para simplificar.
+- A CI/CD roda a pipeline de **treino e predição** após o deploy para facilitar a reprodução do case.
 
 ---
 
